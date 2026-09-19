@@ -105,6 +105,20 @@ def memory_texts(payload: Any) -> str:
     return "\n".join(strings)
 
 
+def wait_operation(base: str, bank: str, operation_id: str, timeout_seconds: int = 300) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        _, result = request_json(
+            "GET", f"{base}/v1/default/banks/{bank}/operations/{urllib.parse.quote(operation_id, safe='')}"
+        )
+        if result.get("status") == "completed":
+            return result
+        if result.get("status") in {"failed", "cancelled", "not_found"}:
+            raise RuntimeError(f"operation {operation_id} ended as {result.get('status')}: {result}")
+        time.sleep(1)
+    raise TimeoutError(f"operation {operation_id} did not finish within {timeout_seconds}s")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hindsight", default="http://127.0.0.1:8888")
@@ -231,6 +245,8 @@ def main() -> int:
         f"{base}/v1/default/banks/{bank}/documents/{lifecycle_safe}/reprocess",
     )
     save_json(output, "a03-reprocess.json", reprocess_response)
+    reprocess_completed = wait_operation(base, bank, reprocess_response["operation_id"])
+    save_json(output, "a03-reprocess-completed.json", reprocess_completed)
     _, delete_response = request_json(
         "DELETE",
         f"{base}/v1/default/banks/{bank}/documents/{lifecycle_safe}",
@@ -257,6 +273,7 @@ def main() -> int:
         "status": "PASS" if a03_pass else "FAIL",
         "document_id": lifecycle_id,
         "reprocess_operation_id": reprocess_response.get("operation_id"),
+        "reprocess_status_before_delete": reprocess_completed.get("status"),
         "memory_units_deleted": delete_response.get("memory_units_deleted"),
         "remaining_memories": remaining_memories,
     }

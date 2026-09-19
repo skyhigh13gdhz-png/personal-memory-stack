@@ -359,7 +359,7 @@ Gitee        = 中国大陆只读部署镜像
 
 A01–A06 的正式机结果已证明：当前没有启动独立 Record PostgreSQL 的证据。Hindsight Documents 继续作为候选 Record Layer，Gateway 可以开始设计最薄的 Document/timestamp/Patch 封装。
 
-在 A07 附件链路和 A08 导出/恢复通过前，Hindsight 仍不升级为已定案的唯一 Canonical Source。详细证据见 [AUDIT_RESULTS_2026-09-19.md](AUDIT_RESULTS_2026-09-19.md)。
+A08 已通过无附件的公开 API 导出/隔离恢复。在 A07 附件链路及附件备份回归通过前，Hindsight 仍不升级为已定案的唯一 Canonical Source。详细证据见 [AUDIT_RESULTS_2026-09-19.md](AUDIT_RESULTS_2026-09-19.md)。
 
 ## 15. 当前已知风险
 
@@ -372,3 +372,4 @@ A01–A06 的正式机结果已证明：当前没有启动独立 Record PostgreS
 7. replace 可能不保留业务所需的纠错审计历史；
 8. `original_text` 是否指未处理的 `source_text` 还是 `normalized_text` 尚未定义；
 9. 一条长 Document 可能包含多个事件时间，单一 timestamp 不能直接等价于日记归档日期。
+10. 运行中的异步 reprocess 可在 delete 之后重建同一 Document，Gateway 必须序列化同 Document 的变更操作。

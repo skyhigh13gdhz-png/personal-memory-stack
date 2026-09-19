@@ -20,12 +20,12 @@
 | --- | --- | --- |
 | A01 | PASS | Gateway Retain 后可通过 Document API 逐字节取回 original_text |
 | A02 | PASS | 同 document_id replace 会更新原文/hash，删除旧 Memory 并生成新 Memory |
-| A03 | PASS | reprocess 可提交；delete 同时删除 Document 和关联 Memory |
+| A03 | PASS WITH RACE | 顺序 delete 能删除 Document/Memory；运行中 reprocess 可在 delete 后将其复活 |
 | A04 | PASS WITH FINDING | timestamp/timeless/多事件时间可用；多事件抽取粒度存在非确定性 |
 | A05 | PASS | tags all_strict、offset/limit 分页和重复查询排序通过 |
 | A06 | PASS WITH FINDING | 三种模式原文均完整，当前样本 6/6 召回均通过 |
 | A07 | TODO | ChatGPT 图片 → MCP → Gateway → Attachment |
-| A08 | TODO | 导出、备份、恢复和迁移 |
+| A08 | PASS | 7 个 Documents 通过公开 API 导出并在新 bank 无损恢复 |
 
 ## 3. A01 原文完整性
 
@@ -55,7 +55,9 @@ replace 本身不提供业务纠错历史，后续仍需要轻量 append-only Co
 - Document after delete：HTTP 404
 - Memories after delete：0
 
-结论：Document 和关联 Memory 的删除生命周期在当前版本一致。reprocess 是异步操作；本轮确认成功提交和 operation ID，完成状态轮询及重复 Memory 检查留待幂等回归。
+结论：顺序路径上 Document 和关联 Memory 可一起删除，但 reprocess 是异步操作。实测在 reprocess 仍运行时立即 delete，短时检查是 404/0，约十余秒后 reprocess 又创建了原 Document 和 1 条 Memory。这是明确的竞态。
+
+工程约束：Gateway 不得在未等待/取消同 Document 运行中操作时暴露 delete/reprocess；审计脚本已改为等待 reprocess completed 后再 delete。
 
 ## 6. A04 时间模型
 
@@ -101,12 +103,24 @@ replace 本身不提供业务纠错历史，后续仍需要轻量 append-only Co
 1. V2.1 不启动独立 Record PostgreSQL；
 2. Hindsight Documents 继续作为候选 Record Layer；
 3. Gateway 下一步可开始设计薄封装：document_id、timestamp、Document GET/List 和 compare-and-swap Patch；
-4. A08 通过之前，不将 Hindsight 正式宣布为唯一 Canonical Source；
+4. A08 无附件导出/恢复已通过，A07 及附件备份回归通过前不宣布为唯一 Canonical Source；
 5. A07 失败时只补真实缺口，不预先建设 Asset Store。
 
-## 10. 可重复入口
+## 10. A08 导出 / 恢复
+
+- 源 bank：`audit-v21-20260919t220000z`；
+- 恢复 bank：`audit-v21-restore-20260919t220000z`；
+- Documents：7 → 7；
+- 导出 ZIP：5489 bytes；
+- ZIP SHA-256：`b4503b763adb98c9e5d8450e3aac7d31a1283349696c727e8c1570ecf7c4ff43`；
+- 逐 Document 对比：ID、原文 hash、content hash、tags、metadata、retain params、Memory 数量全部一致。
+
+结论：Hindsight 0.10.0 的公开 Document Transfer API 已实现不依赖内部表的基础迁移闭环。本轮无附件、observation 和 knowledge base，它们仍需在 A07 及后续备份回归中验证。
+
+## 11. 可重复入口
 
 - scripts/hindsight_audit_a01_a04.py
 - scripts/hindsight_audit_a05_a06.py
+- scripts/hindsight_audit_a08.py
 
 脚本不包含凭据，不访问非 audit-* bank。原始 JSON 保留在服务器 /var/tmp/hindsight-audit-* 目录。
