@@ -134,14 +134,14 @@ ChatGPT / Claude / Qwen / 其他入口
 
 | 业务需求 | Hindsight 候选能力 | 当前状态 |
 | --- | --- | --- |
-| 完整记录内容 | `Document.original_text` | 有文档/API 证据，待正式机闭环验证 |
-| 稳定记录 ID | `document_id` | 待验证幂等与 replace 语义 |
+| 完整记录内容 | `Document.original_text` | A01 已验证逐字节一致 |
+| 稳定记录 ID | `document_id` | A02 已验证 replace 语义；幂等回归待补强 |
 | AI 语义记忆 | memory units / Recall / Reflect | V1 已验收 |
-| 事件时间 | retain `timestamp` / `occurred_*` | 待正式机验证 |
-| 写入时间 | Document `created_at` / `updated_at` | 待验证 |
-| speaker / source / session | bank、tags、metadata | 需要验证隔离边界和查询能力 |
+| 事件时间 | retain `timestamp` / `occurred_*` | A04 基础语义已验证，多事件抽取粒度可变 |
+| 写入时间 | Document `created_at` / `updated_at` | A02/A04 已验证 |
+| speaker / source / session | bank、tags、metadata | A05 小数据量查询/分页已验证 |
 | 图片和附件 | Document attachments | Hindsight 侧有能力，ChatGPT→MCP 链路未验证 |
-| 纠错 | 同 `document_id` replace / reprocess | 待验证旧 memory 是否完全消失 |
+| 纠错 | 同 `document_id` replace / reprocess | A02 确认旧 memory 消失；审计历史仍需薄补丁 |
 | 人类可读文档 | Documents → Markdown | 尚未实现 |
 
 `Semantic Memory ≠ Raw Record` 仍然是有效判断；变化的是 Raw Record 不再默认必须由另一套 PostgreSQL 承担。
@@ -355,7 +355,13 @@ Gitee        = 中国大陆只读部署镜像
 - OAuth、API Key、Gateway Token、Tunnel token、真实记忆和附件不得进入 Git；
 - V1 与 V2 分阶段验收，不把未实现设计写成已交付能力。
 
-## 14. 当前已知风险
+## 14. 当前阶段结论
+
+A01–A06 的正式机结果已证明：当前没有启动独立 Record PostgreSQL 的证据。Hindsight Documents 继续作为候选 Record Layer，Gateway 可以开始设计最薄的 Document/timestamp/Patch 封装。
+
+在 A07 附件链路和 A08 导出/恢复通过前，Hindsight 仍不升级为已定案的唯一 Canonical Source。详细证据见 [AUDIT_RESULTS_2026-09-19.md](AUDIT_RESULTS_2026-09-19.md)。
+
+## 15. 当前已知风险
 
 1. 当前服务器只有约 2GB RAM，依赖 4GB Swap，Hindsight 应保持低并发并持续观察；
 2. 本机 Codex OAuth 凭据已按用户明确授权复制到服务器，服务器安全边界等同于账户凭据安全边界；
