@@ -298,6 +298,8 @@ Session Close
 
 ### Phase 4：Markdown Journal
 
+状态：最小只读投影器已实现，并使用隔离审计 bank 在服务器验收；Obsidian 真实 Vault 布局与同步仍待验证。
+
 - 先生成按日排列的原始记录；
 - 验证 Obsidian 可读；
 - 暂不追求复杂日报。
