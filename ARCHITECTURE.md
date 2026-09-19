@@ -1,7 +1,7 @@
 # Personal Memory 架构设计记录
 
-状态：V1 已部署并通过真实验收；V2.1 处于 Hindsight 原生能力审计和实机验证阶段，尚未定案。
-更新日期：2026-09-19
+状态：V1 已部署并通过真实验收；V2.1 的 Document/timestamp/Patch 薄封装已部署，附件与 Markdown 投影待继续验证。
+更新日期：2026-09-20
 
 ## 1. 项目目标
 
@@ -61,16 +61,16 @@ Cloudflare Tunnel → 127.0.0.1:8000
 #### `memory-gateway`
 
 - 所有 AI 客户端访问记忆系统的统一业务边界；
-- 提供 Retain、Recall、Reflect API；
+- 提供 Retain、Recall、Reflect 以及 Document List/Get/Patch API；
 - 管理 Gateway Token、client、bank、speaker 等隔离字段；
 - 通过 adapter 访问 Hindsight，不读取 Hindsight 内部数据库；
-- V2.1 的 Document 查询、纠错和投影能力也应从这里作薄封装。
+- 已实现 Document 查询、speaker 隔离、同 Document 串行化和 CAS Patch；投影能力仍应从这里作薄封装。
 
 #### `memory-mcp`
 
 - 把 Gateway HTTP API 转换为通用 MCP tools；
 - 不直接访问 Hindsight，不保存记忆；
-- 当前正式工具：`memory_retain`、`memory_recall`、`memory_reflect`；
+- 当前正式工具：`memory_retain`、`memory_recall`、`memory_reflect`、`memory_document_list`、`memory_document_get`、`memory_document_patch`；
 - 使用稳定 `speaker` ID 隔离共享 ChatGPT 账号下的不同讲述者；
 - 默认只监听本机，由 Cloudflare Tunnel 发布公网。
 
@@ -91,6 +91,8 @@ Reflect                   PASS
 MCP 本机完整链路          PASS
 Cloudflare 公网完整链路   PASS
 speaker 隔离基础能力      PASS
+Document List/Get/Patch   PASS
+Patch 冲突与 speaker 隔离   PASS
 服务开机自动恢复          PASS
 ```
 
@@ -288,6 +290,8 @@ Session Close
 
 ### Phase 3：Gateway/MCP 最小改造
 
+状态：已完成并在服务器本机及 Cloudflare 公网链路验收。
+
 - 保留 `memory_retain` / `memory_recall` / `memory_reflect`；
 - 只补审计证明缺失的原文查询、Patch 纠错和时间参数；
 - 不在 Gateway 内复制 Hindsight 已有的数据模型。
@@ -357,7 +361,7 @@ Gitee        = 中国大陆只读部署镜像
 
 ## 14. 当前阶段结论
 
-A01–A06 的正式机结果已证明：当前没有启动独立 Record PostgreSQL 的证据。Hindsight Documents 继续作为候选 Record Layer，Gateway 可以开始设计最薄的 Document/timestamp/Patch 封装。
+A01–A06 的正式机结果已证明：当前没有启动独立 Record PostgreSQL 的证据。Gateway/MCP 的 Document/timestamp/CAS Patch 最薄封装已于 2026-09-20 部署，本机和 Cloudflare 公网端到端验收均通过。
 
 A08 已通过无附件的公开 API 导出/隔离恢复。在 A07 附件链路及附件备份回归通过前，Hindsight 仍不升级为已定案的唯一 Canonical Source。详细证据见 [AUDIT_RESULTS_2026-09-19.md](AUDIT_RESULTS_2026-09-19.md)。
 
