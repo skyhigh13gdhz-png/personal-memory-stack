@@ -1,6 +1,6 @@
 # Personal Memory 架构设计记录
 
-状态：V1 已部署并通过真实验收；V2 为已讨论的目标设计，尚未实现。  
+状态：V1 已部署并通过真实验收；V2.1 处于 Hindsight 原生能力审计和实机验证阶段，尚未定案。
 更新日期：2026-09-19
 
 ## 1. 项目目标
@@ -64,7 +64,7 @@ Cloudflare Tunnel → 127.0.0.1:8000
 - 提供 Retain、Recall、Reflect API；
 - 管理 Gateway Token、client、bank、speaker 等隔离字段；
 - 通过 adapter 访问 Hindsight，不读取 Hindsight 内部数据库；
-- 未来的 Record/Event Router 也应从这里扩展。
+- V2.1 的 Document 查询、纠错和投影能力也应从这里作薄封装。
 
 #### `memory-mcp`
 
@@ -96,158 +96,106 @@ speaker 隔离基础能力      PASS
 
 V1 当前解决的是“让 AI 能记住和想起”，不是完整的个人记录系统。
 
-## 3. V2 目标：个人数字记忆基础设施
+## 3. V2.1 候选架构：先复用 Hindsight Documents
 
-V2 不推翻 V1，而是在 Gateway 后增加人类可读、可纠错、可再生成的数据主干。
+新的设计原则是：先完整理解 Hindsight 的公开数据模型，再决定 Gateway 需要补什么。独立 Record Store、Session Store、Asset Store、复杂 Revision Store 和 Event Router 全部暂停开发，不代表永久取消。
 
 ```text
 ChatGPT / Claude / Qwen / 其他入口
                      │
                      ▼
+          保守 Normalizer（客户端）
+                     │
+                     ▼
                 Memory MCP
                      │
                      ▼
-                Memory Gateway
+            Memory Gateway
+          权限 / 隔离 / 确定性操作
                      │
                      ▼
-                 Event Router
-          ┌──────────┼───────────┐
-          │          │           │
-          ▼          ▼           ▼
-    Record Store  Hindsight  Document Pipeline
-          │       AI语义记忆       │
-          │                        ▼
-          ├── Session Store   Markdown Vault
-          ├── Asset Store          │
-          └── Revision Store       ▼
-                                Obsidian
+          Hindsight Documents
+          ├── document_id
+          ├── original_text
+          ├── metadata / tags
+          ├── attachments
+          └── memory units / temporal model
+                     │
+                     ▼
+           Markdown Projector
+                     │
+                     ▼
+                  Obsidian
 ```
 
-### 三类真相与投影
+上图是待验证候选架构，不是已交付能力。Hindsight Documents 只有在通过原文、更新、时间、附件、导出和恢复测试后，才能升级为 Canonical Record Source。
+
+## 4. 已发现的原生能力映射
+
+| 业务需求 | Hindsight 候选能力 | 当前状态 |
+| --- | --- | --- |
+| 完整记录内容 | `Document.original_text` | 有文档/API 证据，待正式机闭环验证 |
+| 稳定记录 ID | `document_id` | 待验证幂等与 replace 语义 |
+| AI 语义记忆 | memory units / Recall / Reflect | V1 已验收 |
+| 事件时间 | retain `timestamp` / `occurred_*` | 待正式机验证 |
+| 写入时间 | Document `created_at` / `updated_at` | 待验证 |
+| speaker / source / session | bank、tags、metadata | 需要验证隔离边界和查询能力 |
+| 图片和附件 | Document attachments | Hindsight 侧有能力，ChatGPT→MCP 链路未验证 |
+| 纠错 | 同 `document_id` replace / reprocess | 待验证旧 memory 是否完全消失 |
+| 人类可读文档 | Documents → Markdown | 尚未实现 |
+
+`Semantic Memory ≠ Raw Record` 仍然是有效判断；变化的是 Raw Record 不再默认必须由另一套 PostgreSQL 承担。
+
+## 5. 原始内容与 Normalizer 边界
+
+客户端常驻规则应保持极短：
 
 ```text
-Record / Session / Asset = Canonical Source，业务事实源
-Hindsight                = AI Projection，语义记忆投影
-Markdown Vault           = Human Projection，人类可读投影
+调用 memory_retain 前，对记录做保守的基础纠错：
+仅修正高度确定的错别字、ASR 错词、重复词、标点及格式错误。
+不得总结、润色、删减、补充、推断或改变原意和确定程度。
+不确定时保持原文。
 ```
 
-因此：
-
-- Markdown 删除后可以从事实源重新生成；
-- Hindsight 损坏后可以从事实源重新 Retain；
-- 更换 Obsidian 或 Hindsight 不会丢失核心业务数据；
-- 不直接把 Hindsight 内部数据库当个人记录业务库。
-
-## 4. V2 核心数据对象
-
-### Record
-
-表示“一条当时实际产生的记录”。建议字段：
+“原始记录”必须进一步明确是用户/ASR 原始输入，还是保守纠错后的文本。能力审计期间保留两个逻辑概念：
 
 ```text
-record_id
-speaker
-created_at
-event_at
-source
-workspace
-topic
-content_type
-original_content
-corrected_content
-session_id
-asset_ids[]
-revision
-metadata
+source_text       用户或 ASR 真正产生的内容
+normalized_text   送入 Hindsight 的保守纠错内容
 ```
 
-Record 负责回答：当时到底记录了什么，以及后来如何纠正。
+是否同时持久化两者，需要根据审计价值、隐私与存储成本决定。
 
-### Session
+## 6. 纠错契约：局部 Patch，不整篇重写
 
-表示“一段连续活动”，例如一次 ENA 实盘交流、项目讨论或旅行规划。建议字段：
+LLM 负责理解用户想修改哪里，Gateway 只执行确定、可验证、可审计的 compare-and-swap：
 
 ```text
-session_id
-speaker
-workspace
-topic
-started_at
-ended_at
-record_ids[]
-asset_ids[]
-metadata
+memory_patch(
+  document_id,
+  expected_text,
+  replacement_text
+)
 ```
 
-Session 让 Document Engine 知道哪些消息、图片和分析属于同一件事。
+Gateway 必须确认当前内容仍精确包含 `expected_text`；否则返回 `PATCH_CONFLICT` 并不修改。修改成功后使用同一 `document_id` replace/reprocess，并验证旧 memory 已消失。
 
-### Asset
+Hindsight replace 即使能更新当前内容，也未必提供完整纠错审计历史。如实验确认缺失，优先补一个轻量 append-only Correction Log，不立即建设完整 Revision Store。
 
-表示图片和附件原件。建议字段：
+## 7. 时间模型
+
+必须区分：
 
 ```text
-asset_id
-record_id
-session_id
-filename
-mime_type
-sha256
-storage_path
-created_at
-metadata
+ingested_at    系统什么时候得知
+timestamp      retain 时的事件时间/解释锚点
+occurred_*     Memory 中提取的事件时间
+journal_date   可选，Markdown 确定性归档日期
 ```
 
-职责边界：Asset Store 保存原件；Hindsight 理解图片；Markdown Vault 展示图片。
+不先为每条记录强制添加 `date:YYYY-MM-DD` tag。先实测 Hindsight 时间语义、Document List 查询限制以及多事件长文本。如日记投影仍无法稳定实现，再增加最薄的应用层索引。
 
-### Revision
-
-纠错不能生成两条互相冲突的事实。正确流程是：
-
-```text
-record_correct(record_id)
-          │
-          ▼
-revision N → N+1
-          │
-          ├── 更新事实源
-          ├── 用稳定 document_id 更新/重处理 Hindsight
-          └── 重新生成相关 Markdown 投影
-```
-
-## 5. V2 Gateway API 方向
-
-在现有 Memory API 之外增加 Record/Session/Asset API：
-
-```text
-record_create
-record_get
-record_list
-record_correct
-record_delete
-
-session_create
-session_get
-session_close
-session_attach_record
-
-asset_create
-asset_get
-asset_link
-```
-
-未来 `memory_retain` 的内部行为应升级为：
-
-```text
-① 创建 Record
-② 保存原始内容并生成稳定 record_id
-③ 投递给 Hindsight，document_id 关联 record_id
-④ 保存处理状态
-⑤ 更新 Markdown Journal 投影
-```
-
-第一版 Record Store 建议独立使用 PostgreSQL；Hindsight 自己的 PostgreSQL 继续由 Hindsight 管理。
-
-## 6. Document Engine 与 Vault
+## 8. Document Engine 与 Vault
 
 Document Engine 采用“固定模板 + LLM 填充”，而不是让模型自由决定文档结构。
 
@@ -281,7 +229,7 @@ Personal Vault/
 
 Obsidian 只是 Human UI，不是后端，也不要求一直在线。
 
-## 7. 同步与多 Writer 原则
+## 9. 同步与多 Writer 原则
 
 服务器 AI 和用户本人都可能修改内容，因此不能让双方随意重写同一个 Markdown 文件。
 
@@ -297,11 +245,11 @@ trading/review/     Human + AI 协作，必须保留 revision
 
 Git、Syncthing 或其他同步方式需要根据 Mac、iPhone、国内网络和冲突体验单独实测，当前不预先锁死。
 
-## 8. 自动化方向
+## 10. 自动化方向
 
 ```text
 每天 23:50
-Records + Sessions → Daily Builder → 日报
+Hindsight Documents → Daily Builder → 日报
 
 每周
 日报 + 关键 Records + Hindsight Reflect → 周报
@@ -315,7 +263,7 @@ Session Close
 
 定时器本身不是主要风险，Record 数据模型、附件入口和多 Writer 冲突才是主要风险。
 
-## 9. 分阶段实施顺序
+## 11. 分阶段实施顺序
 
 ### Phase 1：V1 语义记忆主干
 
@@ -326,41 +274,73 @@ Session Close
 - speaker 隔离；
 - 本机与公网 smoke test。
 
-### Phase 2：Record Store + Revision
+### Phase 2：Hindsight 能力审计
 
-- 建立独立 PostgreSQL 业务库；
-- 实现 Record API；
-- `memory_retain` 双写 Record Store 与 Hindsight；
-- 用稳定 ID 处理纠错和重处理。
+- Document 原文完整性；
+- 同 `document_id` replace / delete / reprocess；
+- timestamp 与 temporal recall；
+- tags / metadata / 分页 / 排序；
+- attachments 和原始 bytes；
+- 全量导出、备份、恢复和迁移；
+- concise / verbose / verbatim 长记录 A/B。
 
-验收：当天记录 10 条、纠正 1 条，数据库、Markdown 与 Recall 结果一致。
+详细步骤和决策门见 [HINDSIGHT_AUDIT.md](HINDSIGHT_AUDIT.md)。
 
-### Phase 3：Markdown Journal
+### Phase 3：Gateway/MCP 最小改造
+
+- 保留 `memory_retain` / `memory_recall` / `memory_reflect`；
+- 只补审计证明缺失的原文查询、Patch 纠错和时间参数；
+- 不在 Gateway 内复制 Hindsight 已有的数据模型。
+
+### Phase 4：Markdown Journal
 
 - 先生成按日排列的原始记录；
 - 验证 Obsidian 可读；
 - 暂不追求复杂日报。
 
-### Phase 4：Session + Asset
+### Phase 5：附件与 Session 缺口
 
 - 串联连续交易或项目讨论；
-- 保存图片/附件原件及 hash；
+- 先复用 Hindsight Attachment，只在不足时增加 Asset 层；
 - 实测 ChatGPT 上传附件能否通过 MCP 稳定传到后端。
 
 验收：一次包含 20 轮交流和 3 张图的交易 Session 能完整形成实盘记录。
 
-### Phase 5：Document Engine
+### Phase 6：Document Engine
 
 - 固定模板；
 - 交易实盘、交易复盘、项目文档和知识笔记。
 
-### Phase 6：日报、周报、月报与同步
+### Phase 7：日报、周报、月报与同步
 
 - 自动化生成；
 - Vault 同步方案实测；
 - 明确多 Writer ownership 和冲突处理。
 
-## 10. 工程治理原则
+## 12. 决策门
+
+```text
+Hindsight 原生能力
+        ↓
+个人记忆真实需求
+        ↓
+还缺什么？
+        │
+        ├─ 不缺     → 直接复用
+        ├─ 小缺口   → Gateway 薄封装/轻量索引
+        └─ 核心缺口 → 新增独立组件
+```
+
+只有任一条被实验证明，才启动独立 Record Store：
+
+- 无法通过公开 API 完整读取原文；
+- replace/delete 会留下冲突 memory 或不能稳定更新；
+- 无法做可验证的全量导出和恢复；
+- 附件原件不可导出或生命周期不可控；
+- Hindsight 升级导致作为事实源的 API 无法保持兼容；
+- 需求必须依赖强事务、完整审计或高级查询，而薄封装无法安全实现。
+
+## 13. 工程治理原则
 
 ```text
 GitHub       = 唯一可写 Source of Truth
@@ -375,11 +355,14 @@ Gitee        = 中国大陆只读部署镜像
 - OAuth、API Key、Gateway Token、Tunnel token、真实记忆和附件不得进入 Git；
 - V1 与 V2 分阶段验收，不把未实现设计写成已交付能力。
 
-## 11. 当前已知风险
+## 14. 当前已知风险
 
 1. 当前服务器只有约 2GB RAM，依赖 4GB Swap，Hindsight 应保持低并发并持续观察；
 2. 本机 Codex OAuth 凭据已按用户明确授权复制到服务器，服务器安全边界等同于账户凭据安全边界；
 3. Cloudflare Tunnel token 可运行对应 connector，泄漏后必须立即轮换；
 4. ChatGPT 上传图片原件能否稳定传入自定义 MCP 尚未实测；
 5. Markdown 多端同步和双向修改规则尚未最终选型；
-6. V2 数据模型一旦投入真实长期数据，迁移成本会上升，实施前需要先固定 schema 与 API contract。
+6. Hindsight Documents 是否足以作为长期 Canonical Source 尚未验证；
+7. replace 可能不保留业务所需的纠错审计历史；
+8. `original_text` 是否指未处理的 `source_text` 还是 `normalized_text` 尚未定义；
+9. 一条长 Document 可能包含多个事件时间，单一 timestamp 不能直接等价于日记归档日期。

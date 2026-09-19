@@ -2,7 +2,7 @@
 
 这是同一台 Ubuntu 服务器的一条龙部署编排器。GitHub 仓库是该编排层的唯一可写源：[skyhigh13gdhz-png/personal-memory-stack](https://github.com/skyhigh13gdhz-png/personal-memory-stack)。
 
-完整的当前架构、V2 目标设计、数据模型和实施阶段见 [ARCHITECTURE.md](ARCHITECTURE.md)；本次服务器真实验收数据见 [VALIDATION.md](VALIDATION.md)。
+当前架构、V2.1 候选设计和决策门见 [ARCHITECTURE.md](ARCHITECTURE.md)；Hindsight 实机审计步骤见 [HINDSIGHT_AUDIT.md](HINDSIGHT_AUDIT.md)；服务器已完成验收数据见 [VALIDATION.md](VALIDATION.md)。
 
 它不复制四个组件仓的实现，只按依赖顺序调用各仓正式 `bootstrap.sh`：
 
