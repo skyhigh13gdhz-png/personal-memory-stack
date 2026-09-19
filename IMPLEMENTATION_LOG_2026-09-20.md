@@ -55,5 +55,5 @@ MCP 不暴露 Delete/Reprocess。审计已证明，运行中的异步 reprocess 
 
 1. A07 附件入口与附件导出/恢复尚未验证；
 2. Correction Log 尚未实现，当前 Patch 只保证当前值的确定性，不提供完整业务修订史；
-3. 下一个实施阶段应先做 Markdown Journal 最小投影，从 Document `original_text` 生成只读、可重建的按日记录；
+3. Markdown Journal 最小投影已落地为 `scripts/project_markdown_journal.py`，待用隔离样本做服务器实机验收；
 4. 投影跑通后再决定 Correction Log、Session 和 Asset 层是否真有必要。

@@ -53,6 +53,20 @@ sudo bash bootstrap.sh
 
 Cloudflare 默认是完整部署的必需阶段：缺 token 或公网验收失败时，总脚本返回失败，不会把“只有本机链路”误报为完成。仅调试本机链路时可显式设置 `PERSONAL_MEMORY_ALLOW_NO_CLOUDFLARE=1`。
 
+## Markdown Journal 最小投影
+
+`scripts/project_markdown_journal.py` 通过 Gateway Document API 按 speaker 读取原文，生成只读、可重建的按日 Markdown：
+
+```bash
+GATEWAY_API_TOKEN='...' python3 scripts/project_markdown_journal.py \
+  --speaker monica \
+  --output /path/to/Personal-Vault/00-原始记录
+```
+
+- 优先以 `retain_params.event_date` 归日，缺失时回退到 `created_at`，仍缺失则进入 `_undated.md`；
+- 每条记录保留 Document ID 和原文 SHA-256，原文置于动态 Markdown fence 内；
+- 默认拒绝覆盖已有输出；显式传 `--replace-output` 时，旧投影先改名为带 UTC 时间戳的 backup，不直接删除。
+
 中国大陆服务器的代理分两层：`proxy_on` 只影响当前 shell 的 `curl/git/pip`；Docker 镜像由 Docker daemon 自己的代理配置负责。首次 Hindsight 拉取包含大镜像层且解压后占用数 GB，后续重复安装命中本地缓存会明显更快。
 
 ## 本地无副作用检查
