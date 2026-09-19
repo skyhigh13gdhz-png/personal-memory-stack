@@ -1,0 +1,18 @@
+# Root-only runtime configuration and credentials
+*.env
+!config.env.example
+*.token
+auth.json
+.secrets/
+
+# Local/editor artifacts
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.tmp
+
+# Generated state
+dist/
+build/
+coverage/
