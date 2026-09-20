@@ -118,6 +118,21 @@ class ClaimCandidatePipelineTests(unittest.TestCase):
                 model="changed-model",
             ))
 
+    def test_rejected_response_is_quarantined_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "candidates.json"
+            rejected = PIPELINE.write_rejected_response(
+                output,
+                response={"claims": [{"evidence": []}]},
+                model="offline-test",
+                source_digest="a" * 64,
+                error=ValueError("evidence is required"),
+            )
+            value = json.loads(rejected.read_text(encoding="utf-8"))
+            self.assertEqual(value["schema_version"], "claim-rejected-v1")
+            self.assertIn("evidence is required", value["validation_error"])
+            self.assertEqual(rejected.stat().st_mode & 0o777, 0o600)
+
 
 if __name__ == "__main__":
     unittest.main()
