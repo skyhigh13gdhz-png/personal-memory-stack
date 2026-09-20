@@ -61,7 +61,7 @@ Cloudflare Tunnel → 127.0.0.1:8000
 #### `memory-gateway`
 
 - 所有 AI 客户端访问记忆系统的统一业务边界；
-- 提供 Retain、Recall、Reflect 以及 Document List/Get/Patch API；
+- 提供 Retain、Recall、Reflect 以及 Document List/Date Range/Get/Patch API；
 - 管理 Gateway Token、client、bank、speaker 等隔离字段；
 - 通过 adapter 访问 Hindsight，不读取 Hindsight 内部数据库；
 - 已实现 Document 查询、speaker 隔离、同 Document 串行化和 CAS Patch；投影能力仍应从这里作薄封装。
@@ -71,7 +71,7 @@ Cloudflare Tunnel → 127.0.0.1:8000
 
 - 把 Gateway HTTP API 转换为通用 MCP tools；
 - 不直接访问 Hindsight，不保存记忆；
-- 当前正式工具：`memory_retain`、`memory_recall`、`memory_reflect`、`memory_document_list`、`memory_document_get`、`memory_document_patch`；
+- 当前正式工具：`memory_retain`、`memory_recall`、`memory_reflect`、`memory_document_list`、`memory_document_range`、`memory_document_get`、`memory_document_patch`；
 - 使用稳定 `speaker` ID 隔离共享 ChatGPT 账号下的不同讲述者；
 - 默认只监听本机，由 Cloudflare Tunnel 发布公网。
 
@@ -93,6 +93,7 @@ MCP 本机完整链路          PASS
 Cloudflare 公网完整链路   PASS
 speaker 隔离基础能力      PASS
 Document List/Get/Patch   PASS
+Document Date Range 原文  PASS
 Patch 冲突与 speaker 隔离   PASS
 服务开机自动恢复          PASS
 ```

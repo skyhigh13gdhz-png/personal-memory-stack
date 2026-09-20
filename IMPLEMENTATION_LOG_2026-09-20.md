@@ -111,3 +111,16 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 恢复时使用的 `12:00` 只是日期锚点，不是真实事件时刻。投影契约增加 `journal_time_precision=date`：仅知道日期的记录按日归档但显示“当日记录”；只有来源明确提供具体时刻时才显示 `HH:MM`。`created_at` 只用于回退归日，不再冒充事件发生时间。
 
 后续发现客户端还会把日期编码为 `00:00`。因此未显式声明精度的午夜值默认按“仅日期”处理；真实午夜事件必须声明 `journal_time_precision=minute`。Obsidian 同步也由整体替换目标目录改为目录内 `rsync --delete`，保留目录 inode 和文件监听，解决同步后需重启 Obsidian 才能看到新文件的问题。
+
+## 9. 时间范围分析漏召回修正
+
+### 现象与证据
+
+2026-09-17 原始 Document 完整存在并含饮食记录，Hindsight 也生成了 3 个 memory units；但 ChatGPT 做 9 月 14–20 日饮食分析时，Reflect 在 120 秒处失败，随后多轮语义 Recall 只命中 16 日和 18 日。语义召回按相关度返回事实，本来就不保证覆盖日期范围内每一天；用日期字符串搜索正文同样无法匹配只存在于 `retain_params.event_date` 的日期。
+
+### 修复契约
+
+- Gateway Document List 增加包含边界的 `date_from` / `date_to` 过滤与 `include_text=true` 原文返回；
+- MCP 增加 `memory_document_range`，一次确定性返回日期范围内全部 Documents 和完整原文；
+- MCP 总指令明确规定：日报、周报、月报及饮食/睡眠/交易等范围统计必须先调用 Date Range，不能用 Recall/Reflect 判断某天没有记录；
+- 日期过滤仍强制 speaker 隔离，反向日期范围返回 422。
