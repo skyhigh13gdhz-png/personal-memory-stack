@@ -67,6 +67,15 @@ GATEWAY_API_TOKEN='...' python3 scripts/project_markdown_journal.py \
 - 每条记录保留 Document ID 和原文 SHA-256，原文置于动态 Markdown fence 内；
 - 默认拒绝覆盖已有输出；显式传 `--replace-output` 时，旧投影先改名为带 UTC 时间戳的 backup，不直接删除。
 
+macOS 上的自动 Obsidian 接入使用：
+
+```bash
+bash scripts/sync_obsidian_vault.sh
+bash scripts/install_macos_obsidian_sync.sh
+```
+
+默认从 `ubuntu@106.53.204.254` 投影 `speaker=liangzai`，每小时更新当前 Vault 的 `AI/AI外置记忆/00-系统生成/原始记录/liangzai`。Gateway Token 始终留在服务器；本机只通过 SSH 取回生成的 Markdown。可通过 `PERSONAL_MEMORY_SERVER`、`PERSONAL_MEMORY_SPEAKER`、`PERSONAL_MEMORY_VAULT_DIR`、`PERSONAL_MEMORY_TARGET_REL` 和 `PERSONAL_MEMORY_SYNC_INTERVAL` 覆盖默认值。
+
 中国大陆服务器的代理分两层：`proxy_on` 只影响当前 shell 的 `curl/git/pip`；Docker 镜像由 Docker daemon 自己的代理配置负责。首次 Hindsight 拉取包含大镜像层且解压后占用数 GB，后续重复安装命中本地缓存会明显更快。
 
 ## 本地无副作用检查
