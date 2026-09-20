@@ -218,6 +218,41 @@ def validate_model_claims(
     return output
 
 
+def partition_model_claims(
+    response: dict[str, Any],
+    *,
+    documents: list[dict[str, str]],
+    subjects: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(response, dict) or set(response) != {"claims"}:
+        raise ValueError("model response must contain only claims")
+    claims = response["claims"]
+    if not isinstance(claims, list) or len(claims) > 100:
+        raise ValueError("claims must be an array with at most 100 items")
+    valid: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, claim in enumerate(claims):
+        try:
+            candidate = validate_model_claims(
+                {"claims": [claim]},
+                documents=documents,
+                subjects=subjects,
+            )[0]
+        except (ValueError, IndexError) as exc:
+            rejected.append({
+                "source_index": index,
+                "validation_error": f"{type(exc).__name__}: {exc}",
+                "raw_claim": claim,
+            })
+            continue
+        if candidate["candidate_id"] in seen:
+            continue
+        seen.add(candidate["candidate_id"])
+        valid.append(candidate)
+    return valid, rejected
+
+
 def build_package(
     bundle: dict[str, Any],
     documents: list[dict[str, str]],
@@ -226,7 +261,11 @@ def build_package(
     model: str,
     llm_run: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    candidates = validate_model_claims(response, documents=documents, subjects=bundle["subjects"])
+    candidates, rejected_candidates = partition_model_claims(
+        response,
+        documents=documents,
+        subjects=bundle["subjects"],
+    )
     return {
         "schema_version": PIPELINE_VERSION,
         "prompt_version": PROMPT_VERSION,
@@ -237,6 +276,7 @@ def build_package(
         "documents": bundle["documents"],
         "forbidden_inferences": bundle.get("forbidden_inferences", []),
         "candidates": candidates,
+        "rejected_candidates": rejected_candidates,
         "review_log": [],
     }
 
@@ -318,6 +358,7 @@ def write_rejected_response(
     model: str,
     source_digest: str,
     error: Exception,
+    llm_run: dict[str, Any] | None = None,
 ) -> Path:
     rejected = output.with_name(f"{output.stem}.rejected.json")
     write_json_atomic(rejected, {
@@ -325,6 +366,7 @@ def write_rejected_response(
         "prompt_version": PROMPT_VERSION,
         "model": model,
         "source_sha256": source_digest,
+        "llm_run": llm_run or {"mode": "unknown", "calls": None},
         "validation_error": f"{type(error).__name__}: {error}",
         "raw_response": response,
     })
@@ -361,6 +403,11 @@ def main() -> int:
     prepare_parser.add_argument("--output", required=True, type=Path)
     prepare_parser.add_argument("--model", default="offline-test")
 
+    recover_parser = subparsers.add_parser("recover")
+    recover_parser.add_argument("bundle", type=Path)
+    recover_parser.add_argument("--rejected-response", required=True, type=Path)
+    recover_parser.add_argument("--output", required=True, type=Path)
+
     review_parser = subparsers.add_parser("review")
     review_parser.add_argument("file", type=Path)
     review_parser.add_argument("--accept", action="append", default=[])
@@ -373,7 +420,7 @@ def main() -> int:
     export_parser.add_argument("--output", required=True, type=Path)
 
     args = parser.parse_args()
-    if args.command in {"extract", "prepare"}:
+    if args.command in {"extract", "prepare", "recover"}:
         bundle = load_bundle(args.bundle)
         documents = resolve_documents(bundle, args.bundle.parent)
         if args.command == "extract":
@@ -397,10 +444,21 @@ def main() -> int:
                 extraction_messages(bundle, documents),
             )
             llm_run = {"mode": "live", "calls": 1, **call_metrics}
-        else:
+        elif args.command == "prepare":
             model = args.model
             response = json.loads(args.response.read_text(encoding="utf-8"))
             llm_run = {"mode": "offline-response", "calls": 0}
+        else:
+            rejected_response = json.loads(args.rejected_response.read_text(encoding="utf-8"))
+            if rejected_response.get("schema_version") != "claim-rejected-v1":
+                raise ValueError("recovery input must be claim-rejected-v1")
+            model = str(rejected_response.get("model") or "unknown")
+            response = rejected_response.get("raw_response")
+            llm_run = rejected_response.get("llm_run") or {
+                "mode": "recovered-response",
+                "calls": 0,
+                "original_metrics_unavailable": True,
+            }
         try:
             package = build_package(bundle, documents, response, model=model, llm_run=llm_run)
         except Exception as exc:
@@ -410,11 +468,15 @@ def main() -> int:
                 model=model,
                 source_digest=source_hash(documents),
                 error=exc,
+                llm_run=llm_run,
             )
             print(f"[x] quarantined rejected model response: {rejected}", file=sys.stderr)
             raise
         write_json_atomic(args.output, package)
-        print(f"[✓] wrote {len(package['candidates'])} verified candidates: {args.output}")
+        print(
+            f"[✓] wrote {len(package['candidates'])} verified candidates; "
+            f"quarantined {len(package['rejected_candidates'])}: {args.output}"
+        )
         return 0
 
     if args.command == "review":

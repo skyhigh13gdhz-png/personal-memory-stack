@@ -134,11 +134,35 @@ class ClaimCandidatePipelineTests(unittest.TestCase):
                 model="offline-test",
                 source_digest="a" * 64,
                 error=ValueError("evidence is required"),
+                llm_run={"mode": "live", "calls": 1, "total_tokens": 123},
             )
             value = json.loads(rejected.read_text(encoding="utf-8"))
             self.assertEqual(value["schema_version"], "claim-rejected-v1")
             self.assertIn("evidence is required", value["validation_error"])
+            self.assertEqual(value["llm_run"]["total_tokens"], 123)
             self.assertEqual(rejected.stat().st_mode & 0o777, 0o600)
+
+    def test_partitions_invalid_claim_without_weakening_evidence_gate(self):
+        response = response_for_fixture()
+        response["claims"].append({
+            "kind": "event",
+            "summary": "不可验证。",
+            "valid_date": "2026-01-01",
+            "subject_ids": [],
+            "evidence": [{
+                "document_id": "synthetic-2026-01-01",
+                "quote": "原文中不存在",
+            }],
+        })
+        package = PIPELINE.build_package(
+            self.bundle,
+            self.documents,
+            response,
+            model="offline-test",
+        )
+        self.assertEqual(len(package["candidates"]), 2)
+        self.assertEqual(len(package["rejected_candidates"]), 1)
+        self.assertIn("not a verbatim quote", package["rejected_candidates"][0]["validation_error"])
 
 
 if __name__ == "__main__":
