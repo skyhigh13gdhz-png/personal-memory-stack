@@ -60,18 +60,20 @@ Cloudflare Tunnel → 127.0.0.1:8000
 
 ### LLM 分工与额度边界
 
-当前线上基线仍是全局 `openai-codex / gpt-5.6-luna`。已准备第一阶段按操作拆分，但须在服务器交互式写入智谱 API Key 后才生效：
+当前线上保留全局 `openai-codex / gpt-5.6-luna` 作为未覆盖操作的默认值，已对高频操作启用按操作的智谱路由：
 
 ```text
 Retain（抽取、整理记忆）       → 智谱 `glm-4.5-air`
-Reflect（跨记录综合与推理）    → Codex `gpt-5.6-luna`
+Reflect（跨记录综合与推理）    → 智谱 `glm-4.5-air`
 Recall（检索）                 → 不调用 LLM
 Embedding（向量化）            → 本地模型
 Consolidation（合并、去重）     → 智谱 `glm-4.5-air`
 Mental Model Refresh           → 暂时继承全局 Codex
 ```
 
-选择 Retain 作为首个迁移点，是因为它通常是高频、结构化任务，适合先用成本更低的模型承接；首轮验证通过后，后台 Consolidation 也已迁移到同一智谱模型。Reflect 决定综合分析质量，继续保留 Codex 作为质量基线。各智谱操作关闭跨 Provider fallback，避免失败后静默回退 Codex，使成本、时延和质量数据失真。稳定观察后再决定是否加入“智谱主、Codex 备”的容灾链路。
+Retain、Consolidation 和 Reflect 均已迁移到智谱。智谱操作关闭跨 Provider fallback，避免失败后静默回退 Codex，使成本、时延和质量数据失真。Mental Model Refresh 仍是唯一继承全局 Codex 的 Hindsight LLM 操作，后续需单独迁移和验收。批量导入会触发 Consolidation；当后台任务占满 LLM 并发槽时，Reflect 可因排队显著变慢，这与 Provider 路由是否生效是两个问题。
+
+Recall 的 `max_results` 是本次检索返回的 Top-K 条数，不是存储上限，也不会删除记忆。`max_results=5` 只返回排名最高的 5 条，跨日期或主题较宽时可能漏掉目标日期。普通事实检索可使用 10–20，宽泛检索可使用 50–100；需要完整日期覆盖的日报、周报、月报必须使用 Document Date Range，不能仅依赖 Recall Top-K。
 
 智谱国内开放平台使用 `https://open.bigmodel.cn/api/paas/v4`；Hindsight 文档中的 `zai` 默认地址是国际站，不能在未确认 Key 所属平台时混用。API Key 只写入服务器 root-only 环境文件，不进入 Git、日志或命令历史。
 
@@ -323,6 +325,8 @@ Session Close
 - 验证 Obsidian 可读；
 - 暂不追求复杂日报。
 
+原始记录同步直接调用 Gateway Documents API（List/Get）生成确定性 Markdown，不调用 Recall、Reflect 或 LLM。本机手动入口为 `bash scripts/sync_obsidian_vault.sh`；`bash scripts/install_macos_obsidian_sync.sh` 安装每小时运行的 LaunchAgent。
+
 ### Phase 5：附件与 Session 缺口
 
 - 串联连续交易或项目讨论；
@@ -338,6 +342,13 @@ Session Close
 
 ### Phase 7：日报、周报、月报与同步
 
+- 状态：尚未实现，不把当前原始 Markdown 投影误称为日报。
+- 先实现版本化 `daily-v1` 固定结构，再向周报、月报扩展；
+- 数据源使用 Document Date Range 取得当日全量原文，不使用 Recall Top-K 代替完整性；
+- 固定栏目为：事实概览、睡眠/身体、饮食、运动、情绪/关系、工作/项目、交易/财务、决策/待办、不确定/缺失和来源引用；
+- 先生成固定 JSON Schema，再确定性渲染 Markdown；保存 source document IDs、source hash、template version 和 model route；
+- 同一 source hash + template version 重跑必须幂等，无变化时跳过；
+- 日报存入独立目录，默认不自动 Retain 回记忆库，避免生成内容形成反馈循环；
 - 自动化生成；
 - Vault 同步方案实测；
 - 明确多 Writer ownership 和冲突处理。
