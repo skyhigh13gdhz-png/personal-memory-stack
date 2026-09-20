@@ -124,3 +124,14 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 - MCP 增加 `memory_document_range`，一次确定性返回日期范围内全部 Documents 和完整原文；
 - MCP 总指令明确规定：日报、周报、月报及饮食/睡眠/交易等范围统计必须先调用 Date Range，不能用 Recall/Reflect 判断某天没有记录；
 - 日期过滤仍强制 speaker 隔离，反向日期范围返回 422。
+
+### 部署与真实验收
+
+| 仓库 | 提交 | 内容 |
+| --- | --- | --- |
+| `memory-gateway` | `c3c1cbc` | Document 日期范围过滤、完整原文返回与测试 |
+| `memory-mcp` | `7d5fbdd` | `memory_document_range` 与范围分析工具约束 |
+| `memory-gateway` | `47bf379` | 国内服务器部署优先使用本机 Xray |
+| `memory-mcp` | `3128554` | 国内服务器部署优先使用本机 Xray |
+
+服务器本机 MCP 与 Cloudflare 公网 MCP 的 Date Range 验收均 PASS。对 `speaker=liangzai` 执行 2026-09-14 至 2026-09-20 真实查询，确定性返回 16、17、18 日共 3 份完整 Documents；17 日原文确认包含炒面、西瓜、花卷和烤鸭。
