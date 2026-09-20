@@ -13,6 +13,29 @@ from typing import Any
 
 SCHEMA_VERSION = "daily-view-v2"
 ANALYSIS_STATUSES = {"calculated", "observation", "inference"}
+SECTION_TITLES = {
+    "sleep": "睡眠",
+    "food": "饮食与消费",
+    "exercise": "运动",
+    "project_work": "项目与工作",
+    "trading_finance": "交易与财务",
+    "relationships_home": "关系与家庭",
+    "pet": "宠物",
+    "leisure": "休闲",
+    "other": "其他",
+}
+SECTION_ORDER = tuple(SECTION_TITLES)
+CATEGORY_SECTION = {
+    "sleep_body": "sleep",
+    "food": "food",
+    "exercise": "exercise",
+    "work_project": "project_work",
+    "trading_finance": "trading_finance",
+    "relationships_home": "relationships_home",
+    "pet": "pet",
+    "leisure": "leisure",
+    "other": "other",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -35,20 +58,31 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
     }
     referenced: list[str] = []
     reference_items: dict[str, list[dict[str, Any]]] = {}
+    reference_sections: dict[str, set[str]] = {}
     sections = editorial.get("sections")
     if not isinstance(sections, list) or not sections:
         errors.append("sections must be a non-empty array")
         sections = []
+    seen_sections = set()
     for section_index, section in enumerate(sections):
-        if not isinstance(section, dict) or not isinstance(section.get("title"), str):
-            errors.append(f"sections[{section_index}] requires title")
+        if not isinstance(section, dict) or section.get("section_id") not in SECTION_TITLES:
+            errors.append(f"sections[{section_index}] requires valid section_id")
             continue
+        section_id = section["section_id"]
+        if section_id in seen_sections:
+            errors.append(f"duplicate section_id {section_id}")
+        seen_sections.add(section_id)
         groups = section.get("groups")
         if not isinstance(groups, list) or not groups:
             errors.append(f"sections[{section_index}].groups must be non-empty")
             continue
         for group_index, group in enumerate(groups):
             items = group.get("items") if isinstance(group, dict) else None
+            group_kind = group.get("group_kind") if isinstance(group, dict) else None
+            if group_kind not in {"facts", "analysis"}:
+                errors.append(f"sections[{section_index}].groups[{group_index}].group_kind is invalid")
+            if section_id == "project_work" and group_kind == "facts" and not group.get("title"):
+                errors.append(f"sections[{section_index}].groups[{group_index}] project facts require title")
             if not isinstance(items, list) or not items:
                 errors.append(f"sections[{section_index}].groups[{group_index}].items must be non-empty")
                 continue
@@ -68,6 +102,12 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
                 status = item.get("analysis_status")
                 if status is not None and status not in ANALYSIS_STATUSES:
                     errors.append(f"{path}.analysis_status is invalid")
+                if group_kind == "facts" and status in {"observation", "inference"}:
+                    errors.append(f"{path} observation/inference must be in analysis group")
+                if group_kind == "analysis" and status not in ANALYSIS_STATUSES:
+                    errors.append(f"{path} analysis item requires analysis_status")
+                if status == "calculated" and len(refs) < 2:
+                    errors.append(f"{path} calculated item requires at least two evidence units")
                 if status == "inference" and not item.get("uncertainty"):
                     errors.append(f"{path}.uncertainty is required for inference")
                 for unit_id in refs:
@@ -75,9 +115,14 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
                         errors.append(f"{path} references unknown or invisible unit {unit_id}")
                     referenced.append(unit_id)
                     reference_items.setdefault(unit_id, []).append(item)
+                    reference_sections.setdefault(unit_id, set()).add(section_id)
     missing = sorted(set(source_units) - set(referenced))
     if missing:
         errors.append(f"daily units without editorial destination: {missing}")
+    for unit_id, unit in source_units.items():
+        expected = CATEGORY_SECTION.get(unit.get("category"), "other")
+        if unit_id in reference_sections and expected not in reference_sections[unit_id]:
+            errors.append(f"unit {unit_id} must appear in primary section {expected}")
     for unit_id, count in Counter(referenced).items():
         fact_items = [item for item in reference_items[unit_id] if item.get("analysis_status") is None]
         if len(fact_items) > 1 and not all(item.get("facet_split") is True for item in fact_items):
@@ -91,9 +136,10 @@ def render(editorial: dict[str, Any], classified: dict[str, Any], *, audit_detai
     metrics = validate(editorial, classified)
     unit_map = {unit["unit_id"]: unit for unit in classified["units"]}
     lines = [f"# {editorial['date']} 日回顾", ""]
-    for section in editorial["sections"]:
-        lines.extend([f"## {section['title']}", ""])
-        numbered_groups = section.get("number_groups") is True
+    sections = sorted(editorial["sections"], key=lambda item: SECTION_ORDER.index(item["section_id"]))
+    for section in sections:
+        lines.extend([f"## {SECTION_TITLES[section['section_id']]}", ""])
+        numbered_groups = section["section_id"] == "project_work"
         for group_index, group in enumerate(section["groups"], start=1):
             if group.get("title"):
                 prefix = f"{group_index}. " if numbered_groups else ""

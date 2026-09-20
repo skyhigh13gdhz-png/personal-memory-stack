@@ -61,12 +61,17 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
             "content": (
                 "你是个人日报编辑，不是事实抽取器。输入单元已通过证据校验，必须让每个 id 至少出现在一个"
                 "evidence_unit_ids 中。按栏目→具体项目/子主题→语义标签形成总分结构；同项目内容合并去重。"
+                "一级栏目只能使用固定 section_id：sleep/food/exercise/project_work/trading_finance/"
+                "relationships_home/pet/leisure/other；显示标题由程序决定。所有项目必须归入 project_work，"
+                "并以具体项目名建立 facts group，不能把某个项目提升为一级栏目。"
                 "一个单元跨两个事实条目使用时，这些条目都必须 facet_split=true。保留用户稳定用词和领域术语，"
                 "不要改成公文腔。不得增加原文没有的结果、动机或因果。程序可直接计算的内容标"
-                "analysis_status=calculated；跨单元归纳标 observation；推断标 inference 且 uncertainty=true，"
+                "analysis_status=calculated；跨单元归纳标 observation；推断标 inference 且 uncertainty=true。"
+                "原始事实必须放在 group_kind=facts 且不得设置 analysis_status；只有同时基于至少两个单元的"
+                "直接计算可以留在 facts group 并标 calculated；观察/推断必须放在 group_kind=analysis，"
                 "正文必须明确不确定性。没有内容的栏目或字段不要生成。项目归组不等于创建长期 Subject。"
-                "只返回 daily-view-v2 JSON：{schema_version,date,sections:[{title,number_groups?,groups:["
-                "{title?,items:[{label,text,evidence_unit_ids,facet_split?,analysis_status?,uncertainty?}]}]}]}。"
+                "只返回 daily-view-v2 JSON：{schema_version,date,sections:[{section_id,groups:["
+                "{group_kind,title?,items:[{label,text,evidence_unit_ids,facet_split?,analysis_status?,uncertainty?}]}]}]}。"
                 "evidence_unit_ids 只能使用输入短 ID，不输出解释。"
             ),
         },

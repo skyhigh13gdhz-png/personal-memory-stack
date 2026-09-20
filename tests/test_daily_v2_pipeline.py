@@ -38,7 +38,7 @@ class DailyV2PipelineTests(unittest.TestCase):
     def test_expands_short_ids_before_validation(self):
         response = {
             "schema_version": "daily-view-v2", "date": "2026-01-01",
-            "sections": [{"title": "饮食", "groups": [{"items": [{
+            "sections": [{"section_id": "food", "groups": [{"group_kind": "facts", "items": [{
                 "label": "早餐", "text": "吃了面包。", "evidence_unit_ids": ["u01"]
             }]}]}],
         }

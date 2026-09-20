@@ -13,9 +13,9 @@ SPEC.loader.exec_module(EDITORIAL)
 def classified_fixture():
     return {
         "units": [
-            {"unit_id": "u1", "date": "2026-01-01", "visibility": "daily", "text": "早餐吃面包。",
+            {"unit_id": "u1", "date": "2026-01-01", "visibility": "daily", "category": "food", "text": "早餐吃面包。",
              "document_id": "d1", "start": 0, "end": 6},
-            {"unit_id": "u2", "date": "2026-01-01", "visibility": "daily", "text": "上午处理项目并看盘。",
+            {"unit_id": "u2", "date": "2026-01-01", "visibility": "daily", "category": "work_project", "text": "上午处理项目并看盘。",
              "document_id": "d1", "start": 7, "end": 17},
         ]
     }
@@ -26,13 +26,13 @@ def editorial_fixture():
         "schema_version": "daily-view-v2",
         "date": "2026-01-01",
         "sections": [
-            {"title": "饮食与消费", "groups": [{"items": [{
+            {"section_id": "food", "groups": [{"group_kind": "facts", "items": [{
                 "label": "早餐", "text": "吃了面包。", "evidence_unit_ids": ["u1"]
             }]}]},
-            {"title": "项目与工作", "number_groups": True, "groups": [{"title": "示例项目", "items": [{
+            {"section_id": "project_work", "groups": [{"group_kind": "facts", "title": "示例项目", "items": [{
                 "label": "项目推进", "text": "上午处理项目。", "evidence_unit_ids": ["u2"], "facet_split": True
             }]}]},
-            {"title": "交易", "groups": [{"items": [{
+            {"section_id": "trading_finance", "groups": [{"group_kind": "facts", "items": [{
                 "label": "盘中操作", "text": "上午同时看盘。", "evidence_unit_ids": ["u2"], "facet_split": True
             }]}]},
         ],
@@ -42,6 +42,7 @@ def editorial_fixture():
 class DailyV2EditorialTests(unittest.TestCase):
     def test_human_view_is_grouped_and_hides_audit_details(self):
         text = EDITORIAL.render(editorial_fixture(), classified_fixture())
+        self.assertIn("## 项目与工作", text)
         self.assertIn("### 1. 示例项目", text)
         self.assertIn("- 早餐：吃了面包。", text)
         self.assertIn("<!-- evidence u2 -->", text)
@@ -67,9 +68,29 @@ class DailyV2EditorialTests(unittest.TestCase):
 
     def test_inference_requires_uncertainty(self):
         editorial = editorial_fixture()
-        item = editorial["sections"][0]["groups"][0]["items"][0]
+        group = editorial["sections"][0]["groups"][0]
+        group["group_kind"] = "analysis"
+        item = group["items"][0]
         item["analysis_status"] = "inference"
         with self.assertRaisesRegex(ValueError, "uncertainty is required"):
+            EDITORIAL.validate(editorial, classified_fixture())
+
+    def test_rejects_project_promoted_to_free_form_section(self):
+        editorial = editorial_fixture()
+        editorial["sections"][1]["section_id"] = "personal_memory_project"
+        with self.assertRaisesRegex(ValueError, "requires valid section_id"):
+            EDITORIAL.validate(editorial, classified_fixture())
+
+    def test_rejects_observation_on_fact_item(self):
+        editorial = editorial_fixture()
+        editorial["sections"][0]["groups"][0]["items"][0]["analysis_status"] = "observation"
+        with self.assertRaisesRegex(ValueError, "must be in analysis group"):
+            EDITORIAL.validate(editorial, classified_fixture())
+
+    def test_calculated_item_requires_multiple_evidence_units(self):
+        editorial = editorial_fixture()
+        editorial["sections"][0]["groups"][0]["items"][0]["analysis_status"] = "calculated"
+        with self.assertRaisesRegex(ValueError, "requires at least two"):
             EDITORIAL.validate(editorial, classified_fixture())
 
 
