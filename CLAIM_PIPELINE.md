@@ -76,6 +76,8 @@ python3 scripts/claim_candidate_pipeline.py export local-evaluation/candidates.j
   --output local-evaluation/accepted-golden.json
 ```
 
+若只有少量 `rejected_candidates`，使用 `scripts/repair_claim_candidates.py` 只重试失败候选及其相关原文，不重发整日记录。修复结果仍经过相同的逐字证据门禁，合并后必须重新运行 95% 召回评估。
+
 可以用 `prepare --response` 注入已保存的模型 JSON，不产生任何网络调用；该入口用于回归测试和 Provider A/B 比较。
 
 ## 5. 下一个决策点
