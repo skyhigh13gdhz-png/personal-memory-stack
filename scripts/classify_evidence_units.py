@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Classify every evidence unit while preserving deterministic fallback coverage."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SPEC = importlib.util.spec_from_file_location("claim_candidate_pipeline", SCRIPT_DIR / "claim_candidate_pipeline.py")
+PIPELINE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(PIPELINE)
+
+CLASSIFIER_VERSION = "evidence-classifier-v1"
+CATEGORIES = {
+    "sleep_body",
+    "food",
+    "exercise",
+    "work_project",
+    "trading_finance",
+    "relationships_home",
+    "pet",
+    "leisure",
+    "other",
+}
+VISIBILITIES = {"daily", "continuity", "both", "archive"}
+IMPORTANCES = {"low", "normal", "high"}
+
+
+def load_units(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("schema_version") != "evidence-units-v1":
+        raise ValueError("input must be evidence-units-v1")
+    if not isinstance(value.get("units"), list) or not value["units"]:
+        raise ValueError("evidence units must be a non-empty array")
+    return value
+
+
+def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
+    subjects = [
+        {
+            "subject_id": item["subject_id"],
+            "subject_type": item["subject_type"],
+            "canonical_name": item["canonical_name"],
+        }
+        for item in evidence["subjects"]
+    ]
+    units = [{"unit_id": item["unit_id"], "text": item["text"]} for item in evidence["units"]]
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是 Evidence Unit 分类器，不负责决定是否保留事实。必须为输入中的每个 unit_id 返回且只返回一项，"
+                "不得遗漏、增加或合并 ID。summary 只能保守压缩当前 unit，不得加入外部信息或因果推断。"
+                "category 只能是 sleep_body/food/exercise/work_project/trading_finance/"
+                "relationships_home/pet/leisure/other。visibility 只能是 daily/continuity/both/archive。"
+                "importance 只能是 low/normal/high。subject_ids 只能使用允许列表；没有直接关联时返回空数组。"
+                "涉及健康、资产策略、人物或宠物档案的稳定状态只做候选关联，后续仍需人工确认。"
+                "返回 {labels:[{unit_id,category,summary,visibility,importance,subject_ids}]}，不输出解释。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {"allowed_subjects": subjects, "units": units},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+    ]
+
+
+def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(response, dict) or set(response) != {"labels"}:
+        raise ValueError("classifier response must contain only labels")
+    labels = response["labels"]
+    if not isinstance(labels, list):
+        raise ValueError("labels must be an array")
+    unit_map = {item["unit_id"]: item for item in evidence["units"]}
+    subject_ids = {item["subject_id"] for item in evidence["subjects"]}
+    accepted: dict[str, dict[str, Any]] = {}
+    rejected = []
+    allowed_keys = {"unit_id", "category", "summary", "visibility", "importance", "subject_ids"}
+    for index, label in enumerate(labels):
+        error = None
+        if not isinstance(label, dict) or set(label) != allowed_keys:
+            error = "invalid keys"
+        elif label.get("unit_id") not in unit_map:
+            error = "unknown unit_id"
+        elif label["unit_id"] in accepted:
+            error = "duplicate unit_id"
+        elif label.get("category") not in CATEGORIES:
+            error = "invalid category"
+        elif label.get("visibility") not in VISIBILITIES:
+            error = "invalid visibility"
+        elif label.get("importance") not in IMPORTANCES:
+            error = "invalid importance"
+        elif not isinstance(label.get("summary"), str) or not label["summary"].strip():
+            error = "summary is required"
+        elif not isinstance(label.get("subject_ids"), list):
+            error = "subject_ids must be an array"
+        elif any(item not in subject_ids for item in label["subject_ids"]):
+            error = "unknown subject_id"
+        if error:
+            rejected.append({"source_index": index, "error": error, "raw_label": label})
+            continue
+        accepted[label["unit_id"]] = {
+            **label,
+            "summary": label["summary"].strip(),
+            "subject_ids": sorted(set(label["subject_ids"])),
+            "classification_status": "classified",
+        }
+
+    classified_units = []
+    for unit in evidence["units"]:
+        label = accepted.get(unit["unit_id"])
+        if label is None:
+            classified_units.append({
+                **unit,
+                "category": "other",
+                "summary": unit["text"],
+                "visibility": "daily",
+                "importance": "normal",
+                "subject_ids": [],
+                "classification_status": "unclassified",
+            })
+        else:
+            classified_units.append({**unit, **label})
+    return {
+        "schema_version": "classified-evidence-v1",
+        "classifier_version": CLASSIFIER_VERSION,
+        "source_sha256": evidence["source_sha256"],
+        "subjects": evidence["subjects"],
+        "units": classified_units,
+        "rejected_labels": rejected,
+        "coverage": {
+            "units_total": len(classified_units),
+            "units_classified": sum(item["classification_status"] == "classified" for item in classified_units),
+            "units_fallback": sum(item["classification_status"] == "unclassified" for item in classified_units),
+            "units_preserved": len(classified_units),
+        },
+    }
+
+
+def input_hash(evidence: dict[str, Any], model: str) -> str:
+    canonical = json.dumps(
+        {
+            "classifier_version": CLASSIFIER_VERSION,
+            "model": model,
+            "source_sha256": evidence["source_sha256"],
+            "unit_ids": [item["unit_id"] for item in evidence["units"]],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    baseline = subparsers.add_parser("baseline")
+    baseline.add_argument("evidence", type=Path)
+    baseline.add_argument("--output", required=True, type=Path)
+    prepare = subparsers.add_parser("prepare")
+    prepare.add_argument("evidence", type=Path)
+    prepare.add_argument("--response", required=True, type=Path)
+    prepare.add_argument("--output", required=True, type=Path)
+    extract = subparsers.add_parser("extract")
+    extract.add_argument("evidence", type=Path)
+    extract.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+    evidence = load_units(args.evidence)
+
+    if args.command == "baseline":
+        response = {"labels": []}
+        result = classify_response(evidence, response)
+        result["llm_run"] = {"mode": "baseline", "calls": 0}
+    elif args.command == "prepare":
+        response = json.loads(args.response.read_text(encoding="utf-8"))
+        result = classify_response(evidence, response)
+        result["llm_run"] = {"mode": "offline-response", "calls": 0}
+    else:
+        api_key = os.environ.get("UNIT_LLM_API_KEY") or os.environ.get("HINDSIGHT_API_RETAIN_LLM_API_KEY", "")
+        base_url = os.environ.get("UNIT_LLM_BASE_URL") or os.environ.get(
+            "HINDSIGHT_API_RETAIN_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"
+        )
+        model = os.environ.get("UNIT_LLM_MODEL") or os.environ.get(
+            "HINDSIGHT_API_RETAIN_LLM_MODEL", "glm-4.5-air"
+        )
+        if not api_key:
+            raise SystemExit("missing UNIT_LLM_API_KEY/HINDSIGHT_API_RETAIN_LLM_API_KEY")
+        response, metrics = PIPELINE.request_llm(
+            base_url,
+            api_key,
+            model,
+            classification_messages(evidence),
+        )
+        result = classify_response(evidence, response)
+        result["llm_run"] = {
+            "mode": "live",
+            "calls": 1,
+            "model": model,
+            "input_hash": input_hash(evidence, model),
+            **metrics,
+        }
+    PIPELINE.write_json_atomic(args.output, result)
+    coverage = result["coverage"]
+    print(
+        f"[✓] preserved {coverage['units_preserved']}/{coverage['units_total']} units; "
+        f"classified {coverage['units_classified']}, fallback {coverage['units_fallback']}: {args.output}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:  # noqa: BLE001
+        print(f"UNIT_CLASSIFIER_ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        raise SystemExit(2)

@@ -48,3 +48,14 @@ Documents
 ```
 
 完整性由程序保证，LLM 只决定阅读形态，不再决定某条事实是否从系统中消失。
+
+## 5. Evidence Unit 基础实现
+
+- 3 份 Documents 被确定性切分为 14 个稳定单元；
+- 非空白原文覆盖率 100%；
+- `classify_evidence_units.py` 要求每个 `unit_id` 恰好返回一个标签；
+- 缺失、非法、重复或引用未知 Subject 的标签进入隔离记录，对应单元自动回退为原文；
+- `render_daily_from_units.py` 只渲染非空栏目，同时保留每个单元的 Document ID、原文和字符区间脚注；
+- baseline、离线响应处理和 Markdown 渲染均为零 LLM 调用。
+
+此实现先解决“信息不能消失”，尚未证明分类、摘要和持续脉络关联质量。真实 LLM 分类必须单独授权并经过人工评审，不能直接进入正式 Obsidian。

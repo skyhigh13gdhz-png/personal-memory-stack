@@ -258,7 +258,8 @@ AI/AI外置记忆/
 ### Gate B：小样本投影器
 
 - `daily-v1` 降级为技术原型；
-- 实现逐条 evidence refs、隐藏空栏目和去重的 temporal-view v1；
+- 已实现确定性 Evidence Unit 切分、逐单元分类契约、原文回退、逐条 evidence refs 和隐藏空栏目的 temporal-view 基础；
+- 待验证摘要忠实度、栏目质量和阅读价值，未通过前只生成私有预览；
 - 只创建 2–3 个人工确认 Subject；
 - 与 Mental Model dry-run 做 A/B，不写生产 Knowledge Base。
 

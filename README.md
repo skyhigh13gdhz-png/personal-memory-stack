@@ -2,6 +2,7 @@
 
 V3 产品设计、停工线和质量门槛见 [DESIGN_V3.md](DESIGN_V3.md)；真实样本的 Gate A 结论见 [GATE_A_REVIEW.md](GATE_A_REVIEW.md)。
 候选 Claim 的提取、逐字验证、风险分流、人工确认和额度控制见 [CLAIM_PIPELINE.md](CLAIM_PIPELINE.md)。
+真实样本证明自由 Claim 抽取会遗漏事实；当前主线改为 Evidence Unit 全覆盖，结果见 [GATE_B_RESULTS_2026-09-20.md](GATE_B_RESULTS_2026-09-20.md)。
 
 Gate A/B 评审工具：
 
@@ -143,6 +144,28 @@ python3 scripts/build_daily_v1.py \
 ```
 
 默认复用 Hindsight Retain 的智谱 Key、Base URL 和 Model；可以用 `DAILY_LLM_API_KEY`、`DAILY_LLM_BASE_URL`、`DAILY_LLM_MODEL` 单独覆盖。运行时会把当日原始记录发送给所配置的 LLM Provider，必须先确认该数据处理边界。生成日报默认不 Retain 回记忆库。
+
+## Evidence Unit 日回顾主线
+
+`daily-v1` 保留为技术原型。当前主线先由程序把完整 Documents 切成稳定 Evidence Units，再让分类器逐单元标注阅读形态；模型漏标、错标或调用失败时，单元以原文回退，不能从日报输入中消失。
+
+```bash
+# 1. 确定性切分，不调用 LLM
+python3 scripts/build_evidence_units.py local-evaluation/input.json \
+  --output local-evaluation/evidence-units.json
+
+# 2. 零 LLM 完整性基线：全部保留为未分类原文
+python3 scripts/classify_evidence_units.py baseline \
+  local-evaluation/evidence-units.json \
+  --output local-evaluation/classified-baseline.json
+
+# 3. 确定性渲染人类可读日报预览
+python3 scripts/render_daily_from_units.py \
+  local-evaluation/classified-baseline.json --date 2026-09-20 \
+  --output local-evaluation/2026-09-20-unit-preview.md
+```
+
+`extract` 子命令会把 Evidence Units 发送给配置的 LLM；处理个人数据前必须取得明确授权。`prepare --response` 可离线验证已保存响应。分类结果只改变栏目、摘要、显示范围和 Subject 候选关联；原文、字符区间、Document ID 与未分类回退始终保留。当前输出仍是私有评审预览，不自动写入 Hindsight 或正式 Obsidian。
 
 ## 本地无副作用检查
 
