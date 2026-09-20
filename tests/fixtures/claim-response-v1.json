@@ -1,0 +1,40 @@
+{
+  "claims": [
+    {
+      "kind": "event",
+      "summary": "开始整理项目需求。",
+      "valid_date": "2026-01-01",
+      "subject_ids": ["project:memory-system"],
+      "evidence": [
+        {
+          "document_id": "synthetic-2026-01-01",
+          "quote": "上午9:00开始整理项目需求。"
+        }
+      ]
+    },
+    {
+      "kind": "event",
+      "summary": "测试了新的导出流程。",
+      "valid_date": "2026-01-01",
+      "subject_ids": ["project:memory-system"],
+      "evidence": [
+        {
+          "document_id": "synthetic-2026-01-01",
+          "quote": "下午3:00测试了新的导出流程。"
+        }
+      ]
+    },
+    {
+      "kind": "event",
+      "summary": "完成导出流程的人工验收。",
+      "valid_date": "2026-01-02",
+      "subject_ids": ["project:memory-system"],
+      "evidence": [
+        {
+          "document_id": "synthetic-2026-01-02",
+          "quote": "中午完成导出流程的人工验收。"
+        }
+      ]
+    }
+  ]
+}

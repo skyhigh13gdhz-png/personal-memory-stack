@@ -1,6 +1,7 @@
 # Personal Memory Stack
 
 V3 产品设计、停工线和质量门槛见 [DESIGN_V3.md](DESIGN_V3.md)；真实样本的 Gate A 结论见 [GATE_A_REVIEW.md](GATE_A_REVIEW.md)。
+候选 Claim 的提取、逐字验证、风险分流、人工确认和额度控制见 [CLAIM_PIPELINE.md](CLAIM_PIPELINE.md)。
 
 Gate A/B 评审工具：
 
