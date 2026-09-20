@@ -79,6 +79,23 @@ bash scripts/install_macos_obsidian_sync.sh
 
 同步时保留目标目录本身，仅增量更新其内部文件，避免 Obsidian 因目录整体替换而丢失文件监听。旧投影仍会先完整备份到相邻的隐藏 `.history` 目录。
 
+## 历史 Markdown 导入
+
+`scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。
+
+当前由 Codex 协助维护和导入的个人记录统一使用稳定身份 `speaker=liangzai`；导入器也以此为默认值，不根据正文内容猜测身份。
+
+```bash
+python3 scripts/import_markdown_history.py \
+  --input-dir /path/to/history \
+  --speaker liangzai \
+  --manifest /tmp/history-import.json \
+  --skip-existing-dates \
+  --dry-run
+```
+
+正式导入时移除 `--dry-run`。生产环境应在服务器加载 `/opt/src/memory-gateway/.env` 后运行，API Token 不应复制到本机命令历史。
+
 中国大陆服务器的代理分两层：`proxy_on` 只影响当前 shell 的 `curl/git/pip`；Docker 镜像由 Docker daemon 自己的代理配置负责。首次 Hindsight 拉取包含大镜像层且解压后占用数 GB，后续重复安装命中本地缓存会明显更快。
 
 ## Hindsight 多 LLM 路由
