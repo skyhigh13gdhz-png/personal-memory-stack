@@ -67,3 +67,11 @@ MCP 不暴露 Delete/Reprocess。审计已证明，运行中的异步 reprocess 
 - 首次后台执行：exit code 0；
 - 无变化重跑：跳过替换，backup 数量保持不变；
 - 安全边界：Gateway Token 不离开服务器，Vault 的其他未提交内容和 Git 历史均未修改。
+
+## 7. 人类可读性修正
+
+- 日记正文改为“日期 → 时间 → 原文”，不再显示 UUID、SHA-256 和 `time_source`；
+- 技术元数据保留在 Markdown HTML 注释和 `manifest.json`，不影响 Obsidian 阅读视图；
+- 精确识别并从人类投影排除 6 条既有部署 smoke 记录，不删除 Hindsight 源数据；
+- MCP smoke 已改为 `speaker=audit-mcp-core` + 稳定 `document_id=mcp-core-smoke`，后续部署不再污染个人记录；
+- 旧投影历史统一保留在隐藏 `.history` 目录，不与正式日记并列。

@@ -64,7 +64,9 @@ if [[ -e "$TARGET" ]]; then
     echo "[✓] Obsidian 投影无变化，无需替换: $TARGET"
     exit 0
   fi
-  BACKUP="${TARGET}.backup-$(date -u +%Y%m%dT%H%M%SZ)"
+  HISTORY_DIR="$(dirname "$TARGET")/.history"
+  mkdir -p "$HISTORY_DIR"
+  BACKUP="$HISTORY_DIR/$(basename "$TARGET").backup-$(date -u +%Y%m%dT%H%M%SZ)"
   [[ ! -e "$BACKUP" ]] || BACKUP="${BACKUP}-$$"
   mv "$TARGET" "$BACKUP"
 fi
