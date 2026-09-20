@@ -38,6 +38,20 @@ class EvidenceUnitTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["non_whitespace_content"], "100%")
         self.assertTrue(all(item["classification_status"] == "unclassified" for item in result["units"]))
 
+    def test_splits_adjacent_chinese_sentences_without_spaces(self):
+        document = {
+            "document_id": "doc-1",
+            "date": "2026-01-01",
+            "original_text": "凌晨睡觉。早上起床。早餐吃面包。",
+        }
+        units = UNITS.split_document(document)
+        self.assertEqual(
+            [item["text"] for item in units],
+            ["凌晨睡觉。", "早上起床。", "早餐吃面包。"],
+        )
+        self.assertEqual(UNITS.content_fingerprint("".join(item["text"] for item in units)),
+                         UNITS.content_fingerprint(document["original_text"]))
+
 
 if __name__ == "__main__":
     unittest.main()

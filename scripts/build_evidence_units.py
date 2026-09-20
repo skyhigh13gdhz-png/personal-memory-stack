@@ -20,7 +20,10 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(PIPELINE)
 
 UNIT_VERSION = "evidence-units-v1"
-SENTENCE_PATTERN = re.compile(r"[^\n]+?(?:[。！？!?](?=\s|$)|(?=\n|$))")
+BUILDER_VERSION = "sentence-split-v2"
+# Chinese sentence punctuation normally has no following whitespace. Requiring a
+# whitespace look-ahead merges unrelated facts from the same paragraph.
+SENTENCE_PATTERN = re.compile(r"[^\n]+?(?:[。！？!?]|(?=\n|$))")
 
 
 def content_fingerprint(text: str) -> str:
@@ -59,6 +62,7 @@ def build_units(bundle: dict[str, Any], documents: list[dict[str, str]]) -> dict
     units = [unit for document in documents for unit in split_document(document)]
     return {
         "schema_version": UNIT_VERSION,
+        "builder_version": BUILDER_VERSION,
         "speaker": bundle.get("speaker"),
         "date": bundle.get("date"),
         "source_sha256": PIPELINE.source_hash(documents),

@@ -51,7 +51,7 @@ Documents
 
 ## 5. Evidence Unit 基础实现
 
-- 3 份 Documents 被确定性切分为 14 个稳定单元；
+- 初版把连续中文句子错误合并成 14 个粗粒度单元；真实日报检查发现后，切分器升级为 `sentence-split-v2`，不再要求中文句末标点后存在空格；
 - 非空白原文覆盖率 100%；
 - `classify_evidence_units.py` 要求每个 `unit_id` 恰好返回一个标签；
 - 缺失、非法、重复或引用未知 Subject 的标签进入隔离记录，对应单元自动回退为原文；
