@@ -44,6 +44,28 @@ class ProjectorTests(unittest.TestCase):
         self.assertNotIn("## 12:00", rendered)
         self.assertEqual(manifest["documents"][0]["time_precision"], "date")
 
+    def test_midnight_defaults_to_date_only_but_can_be_explicit(self):
+        base = {
+            "original_text": "午夜锚点",
+            "retain_params": {"event_date": "2026-09-17T00:00:00+08:00"},
+        }
+        files, manifest = PROJECTOR.build_projection([{"id": "implicit", **base}], "Asia/Shanghai")
+        self.assertIn("## 当日记录", files["2026-09-17.md"])
+        self.assertNotIn("## 00:00", files["2026-09-17.md"])
+        self.assertEqual(manifest["documents"][0]["time_precision"], "date")
+
+        explicit = {
+            "id": "explicit",
+            **base,
+            "retain_params": {
+                **base["retain_params"],
+                "metadata": {"journal_time_precision": "minute"},
+            },
+        }
+        files, manifest = PROJECTOR.build_projection([explicit], "Asia/Shanghai")
+        self.assertIn("## 00:00", files["2026-09-17.md"])
+        self.assertEqual(manifest["documents"][0]["time_precision"], "minute")
+
     def test_created_at_fallback_is_not_presented_as_event_time(self):
         documents = [{
             "id": "doc-created",

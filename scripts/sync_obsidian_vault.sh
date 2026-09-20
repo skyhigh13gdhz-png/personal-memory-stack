@@ -68,13 +68,15 @@ if [[ -e "$TARGET" ]]; then
   mkdir -p "$HISTORY_DIR"
   BACKUP="$HISTORY_DIR/$(basename "$TARGET").backup-$(date -u +%Y%m%dT%H%M%SZ)"
   [[ ! -e "$BACKUP" ]] || BACKUP="${BACKUP}-$$"
-  mv "$TARGET" "$BACKUP"
+  cp -R "$TARGET" "$BACKUP"
 fi
-if ! mv "$LOCAL_STAGE" "$TARGET"; then
-  [[ -z "$BACKUP" || -e "$TARGET" ]] || mv "$BACKUP" "$TARGET"
+mkdir -p "$TARGET"
+# Preserve TARGET's directory inode so Obsidian's existing file watcher keeps
+# receiving create/update/delete events without requiring an app restart.
+if ! rsync -a --delete "$LOCAL_STAGE/" "$TARGET/"; then
+  [[ -z "$BACKUP" ]] || rsync -a --delete "$BACKUP/" "$TARGET/"
   exit 1
 fi
-LOCAL_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/personal-memory-vault.cleanup.XXXXXX")"
 
 echo "[✓] Obsidian 投影已更新: $TARGET"
 [[ -z "$BACKUP" ]] || echo "[✓] 上一版已保留: $BACKUP"

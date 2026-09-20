@@ -109,3 +109,5 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 ### 时间精度修正
 
 恢复时使用的 `12:00` 只是日期锚点，不是真实事件时刻。投影契约增加 `journal_time_precision=date`：仅知道日期的记录按日归档但显示“当日记录”；只有来源明确提供具体时刻时才显示 `HH:MM`。`created_at` 只用于回退归日，不再冒充事件发生时间。
+
+后续发现客户端还会把日期编码为 `00:00`。因此未显式声明精度的午夜值默认按“仅日期”处理；真实午夜事件必须声明 `journal_time_precision=minute`。Obsidian 同步也由整体替换目标目录改为目录内 `rsync --delete`，保留目录 inode 和文件监听，解决同步后需重启 Obsidian 才能看到新文件的问题。

@@ -88,7 +88,15 @@ def document_time(document: dict[str, Any]) -> tuple[datetime | None, str, bool]
     parsed = parse_time(event_date)
     if parsed is not None:
         precision = str(document_metadata(document).get("journal_time_precision") or "").lower()
-        return parsed, "event_date", precision != "date"
+        if precision == "date":
+            show_time = False
+        elif precision in {"minute", "second"}:
+            show_time = True
+        else:
+            # Clients commonly encode a date-only value as local 00:00. Treat it
+            # as a day anchor unless they explicitly declare real time precision.
+            show_time = any((parsed.hour, parsed.minute, parsed.second, parsed.microsecond))
+        return parsed, "event_date", show_time
     parsed = parse_time(document.get("created_at"))
     if parsed is not None:
         return parsed, "created_at", False
