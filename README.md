@@ -175,6 +175,14 @@ python3 scripts/classify_evidence_units.py reconcile \
   local-evaluation/classified.json --output local-evaluation/classified-reconciled.json
 ```
 
+日报 V2 编辑包通过独立 Schema 控制具体项目、子主题、条目标签、个人语气和分析状态；渲染器强制检查当日单元100%有去向、跨 facet 重复显式声明、推断包含不确定性：
+
+```bash
+python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial.json \
+  --classified local-evaluation/classified.json \
+  --output local-evaluation/daily-v2.md
+```
+
 ## 本地无副作用检查
 
 ```bash
