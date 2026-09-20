@@ -19,8 +19,13 @@ class ProjectorTests(unittest.TestCase):
             "retain_params": {"event_date": "2026-09-19T23:30:00+08:00"},
         }]
         files, manifest = PROJECTOR.build_projection(documents, "Asia/Shanghai")
-        self.assertEqual(set(files), {"2026-09-19.md"})
-        self.assertIn(documents[0]["original_text"], files["2026-09-19.md"])
+        self.assertEqual(set(files), {"2026-09-19.md", "_索引.md"})
+        rendered = files["2026-09-19.md"]
+        self.assertIn(documents[0]["original_text"], rendered)
+        self.assertNotIn("time_source:", rendered)
+        self.assertNotIn("sha256:", rendered)
+        self.assertNotIn("## 23:30 ·", rendered)
+        self.assertIn("<!-- personal-memory-record", rendered)
         self.assertEqual(manifest["documents"][0]["time_source"], "event_date")
 
     def test_created_at_fallback_and_undated(self):
@@ -29,8 +34,22 @@ class ProjectorTests(unittest.TestCase):
             {"id": "doc-undated", "original_text": "b", "retain_params": {"event_date": "unset"}},
         ]
         files, manifest = PROJECTOR.build_projection(documents, "Asia/Shanghai")
-        self.assertEqual(set(files), {"2026-09-20.md", "_undated.md"})
+        self.assertEqual(set(files), {"2026-09-20.md", "_undated.md", "_索引.md"})
         self.assertEqual(manifest["document_count"], 2)
+
+    def test_excluded_hash_is_not_rendered(self):
+        text = "deployment smoke"
+        import hashlib
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        files, manifest = PROJECTOR.build_projection(
+            [{"id": "smoke", "original_text": text, "created_at": "2026-09-20T00:00:00Z"}],
+            "Asia/Shanghai",
+            {digest},
+        )
+        self.assertEqual(set(files), {"_索引.md"})
+        self.assertIn("还没有可展示的个人记录", files["_索引.md"])
+        self.assertEqual(manifest["document_count"], 0)
+        self.assertEqual(manifest["excluded_document_count"], 1)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ SERVER="${PERSONAL_MEMORY_SERVER:-ubuntu@106.53.204.254}"
 SPEAKER="${PERSONAL_MEMORY_SPEAKER:-liangzai}"
 VAULT_DIR="${PERSONAL_MEMORY_VAULT_DIR:-/Users/weizhenliang/obsidian空间}"
 TARGET_REL="${PERSONAL_MEMORY_TARGET_REL:-AI/AI外置记忆/00-系统生成/原始记录/liangzai}"
+EXCLUDE_SHA256="${PERSONAL_MEMORY_EXCLUDE_SHA256:-96e88061effc77e3dde914151f96511e484d0174e4076504701f1725ee305070}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECTOR="$SCRIPT_DIR/project_markdown_journal.py"
 TARGET="$VAULT_DIR/$TARGET_REL"
@@ -31,8 +32,15 @@ trap cleanup EXIT
 echo "[→] 在服务器生成 speaker=$SPEAKER 的只读投影"
 REMOTE_TMP="$(ssh "${SSH_OPTS[@]}" "$SERVER" 'mktemp -d /tmp/personal-memory-journal.XXXXXX')"
 scp "${SSH_OPTS[@]}" "$PROJECTOR" "$SERVER:$REMOTE_TMP/project_markdown_journal.py" >/dev/null
+REMOTE_EXCLUDES=""
+IFS=',' read -r -a EXCLUDE_ITEMS <<< "$EXCLUDE_SHA256"
+for digest in "${EXCLUDE_ITEMS[@]}"; do
+  [[ -z "$digest" ]] && continue
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "[✗] 无效的排除 SHA-256: $digest" >&2; exit 2; }
+  REMOTE_EXCLUDES+=" --exclude-text-sha256 $digest"
+done
 ssh "${SSH_OPTS[@]}" "$SERVER" \
-  "sudo -n bash -lc 'set -a; source /opt/src/memory-gateway/.env; python3 \"$REMOTE_TMP/project_markdown_journal.py\" --speaker \"$SPEAKER\" --output \"$REMOTE_TMP/output\"; chown -R ubuntu:ubuntu \"$REMOTE_TMP/output\"'"
+  "sudo -n bash -lc 'set -a; source /opt/src/memory-gateway/.env; python3 \"$REMOTE_TMP/project_markdown_journal.py\" --speaker \"$SPEAKER\" --output \"$REMOTE_TMP/output\"$REMOTE_EXCLUDES; chown -R ubuntu:ubuntu \"$REMOTE_TMP/output\"'"
 
 echo '[→] 下载到本机隔离 staging 目录'
 scp -r "${SSH_OPTS[@]}" "$SERVER:$REMOTE_TMP/output/." "$LOCAL_STAGE/" >/dev/null
@@ -43,7 +51,10 @@ path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 if data.get("schema_version") != 1 or not isinstance(data.get("documents"), list):
     raise SystemExit("invalid projection manifest")
-print(f"[✓] manifest: {data['document_count']} documents / timezone={data['timezone']}")
+print(
+    f"[✓] manifest: {data['document_count']} visible / "
+    f"{data.get('excluded_document_count', 0)} excluded / timezone={data['timezone']}"
+)
 PY
 
 mkdir -p "$(dirname "$TARGET")"
