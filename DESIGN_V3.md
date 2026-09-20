@@ -262,6 +262,8 @@ AI/AI外置记忆/
 - 只创建 2–3 个人工确认 Subject；
 - 与 Mental Model dry-run 做 A/B，不写生产 Knowledge Base。
 
+2026-09-20 真实 dry-run 证明自由 Claim 抽取的最高可验证召回仍只有 84.2%，不达标。Gate B 已转向“确定性 Evidence Units 全覆盖 + LLM 只做分类与压缩”，详见 [GATE_B_RESULTS_2026-09-20.md](GATE_B_RESULTS_2026-09-20.md)。
+
 ### Gate C：连续使用
 
 - 连续 14 天手动触发；
