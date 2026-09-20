@@ -1,0 +1,59 @@
+{
+  "schema_version": "golden-v1",
+  "subjects": [
+    {
+      "subject_id": "project:memory-system",
+      "subject_type": "project",
+      "canonical_name": "个人记忆系统",
+      "promotion_reason": "跨日推进且有明确生命周期"
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "synthetic-2026-01-01",
+      "date": "2026-01-01",
+      "original_text": "上午9:00开始整理项目需求。下午3:00测试了新的导出流程。"
+    },
+    {
+      "document_id": "synthetic-2026-01-02",
+      "date": "2026-01-02",
+      "original_text": "中午完成导出流程的人工验收。"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "claim-1",
+      "kind": "event",
+      "summary": "上午开始整理项目需求。",
+      "valid_date": "2026-01-01",
+      "epistemic_status": "asserted",
+      "subject_ids": ["project:memory-system"],
+      "evidence": [
+        {
+          "document_id": "synthetic-2026-01-01",
+          "quote": "上午9:00开始整理项目需求。"
+        }
+      ]
+    },
+    {
+      "claim_id": "claim-2",
+      "kind": "event",
+      "summary": "完成了导出流程的人工验收。",
+      "valid_date": "2026-01-02",
+      "epistemic_status": "asserted",
+      "subject_ids": ["project:memory-system"],
+      "evidence": [
+        {
+          "document_id": "synthetic-2026-01-02",
+          "quote": "中午完成导出流程的人工验收。"
+        }
+      ]
+    }
+  ],
+  "forbidden_inferences": [
+    {
+      "statement": "新导出流程已经稳定可靠。",
+      "reason": "一次人工验收不足以证明长期稳定性。"
+    }
+  ]
+}

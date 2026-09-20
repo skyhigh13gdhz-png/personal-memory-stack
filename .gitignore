@@ -16,3 +16,6 @@ auth.json
 dist/
 build/
 coverage/
+
+# Private evaluation data: may contain personal journals and absolute local paths.
+local-evaluation/

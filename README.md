@@ -1,5 +1,19 @@
 # Personal Memory Stack
 
+V3 产品设计、停工线和质量门槛见 [DESIGN_V3.md](DESIGN_V3.md)；真实样本的 Gate A 结论见 [GATE_A_REVIEW.md](GATE_A_REVIEW.md)。
+
+Gate A/B 评审工具：
+
+```bash
+python3 scripts/validate_golden_set.py tests/fixtures/golden-v1.json
+python3 scripts/render_daily_v2_preview.py tests/fixtures/golden-v1.json \
+  --date 2026-01-01 --output /tmp/2026-01-01.md
+python3 scripts/render_subject_preview.py tests/fixtures/golden-v1.json \
+  --subject project:memory-system --output /tmp/memory-system.md
+```
+
+`local-evaluation/` 专用于本机真实记录评审，已被 Git 忽略；禁止把个人日记、原文引用或本机绝对路径改放到可提交 fixture。
+
 这是同一台 Ubuntu 服务器的一条龙部署编排器。GitHub 仓库是该编排层的唯一可写源：[skyhigh13gdhz-png/personal-memory-stack](https://github.com/skyhigh13gdhz-png/personal-memory-stack)。
 
 当前架构、V2.1 候选设计和决策门见 [ARCHITECTURE.md](ARCHITECTURE.md)；Hindsight 实机审计步骤见 [HINDSIGHT_AUDIT.md](HINDSIGHT_AUDIT.md)；首轮审计结果见 [AUDIT_RESULTS_2026-09-19.md](AUDIT_RESULTS_2026-09-19.md)；Document API 实施记录见 [IMPLEMENTATION_LOG_2026-09-20.md](IMPLEMENTATION_LOG_2026-09-20.md)；历史日记导入结果见 [IMPORT_LOG_2026-09-20.md](IMPORT_LOG_2026-09-20.md)；服务器已完成验收数据见 [VALIDATION.md](VALIDATION.md)。
