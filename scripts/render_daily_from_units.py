@@ -35,7 +35,7 @@ def load_classified(path: Path) -> dict[str, Any]:
     return value
 
 
-def render(value: dict[str, Any], day: str) -> str:
+def render(value: dict[str, Any], day: str, *, audit_details: bool = False) -> str:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     visible_units = [
         unit for unit in value["units"]
@@ -45,31 +45,39 @@ def render(value: dict[str, Any], day: str) -> str:
         grouped[unit["category"]].append(unit)
     if not any(grouped.values()):
         raise ValueError(f"no daily units for {day}")
-    classified_count = sum(unit["classification_status"] == "classified" for unit in visible_units)
-    fallback_count = len(visible_units) - classified_count
-    lines = [
-        f"# {day} 日回顾",
-        "",
-        "> [!info] Evidence Unit 预览",
-        f"> 当日显示 {len(visible_units)} 个单元；已分类 {classified_count}，"
-        f"原文回退 {fallback_count}。未分类不等于丢失。",
-        "",
-    ]
+    lines = [f"# {day} 日回顾", ""]
+    if audit_details:
+        classified_count = sum(unit["classification_status"] == "classified" for unit in visible_units)
+        fallback_count = len(visible_units) - classified_count
+        lines.extend([
+            "> [!info] Evidence Unit 审计视图",
+            f"> 当日显示 {len(visible_units)} 个单元；已分类 {classified_count}，"
+            f"原文回退 {fallback_count}。未分类不等于丢失。",
+            "",
+        ])
     for section in SECTION_ORDER:
         units = grouped.get(section, [])
         if not units:
             continue
         lines.extend([f"## {SECTION_TITLES[section]}", ""])
         for unit in units:
-            status = "" if unit["classification_status"] == "classified" else " `unclassified`"
-            lines.append(f"- {unit['summary']}{status} [^{unit['unit_id']}]")
+            if audit_details:
+                status = "" if unit["classification_status"] == "classified" else " `unclassified`"
+                lines.append(f"- {unit['summary']}{status} [^{unit['unit_id']}]")
+            else:
+                lines.append(f"- {unit['summary']}")
+                lines.append(
+                    f"  <!-- evidence unit_id={unit['unit_id']} document_id={unit['document_id']} "
+                    f"chars={unit['start']}:{unit['end']} status={unit['classification_status']} -->"
+                )
         lines.append("")
-    lines.extend(["## 证据索引", ""])
-    for unit in visible_units:
-        lines.append(
-            f"[^{unit['unit_id']}]: 「{unit['text']}」 — `{unit['document_id']}` "
-            f"chars {unit['start']}:{unit['end']}"
-        )
+    if audit_details:
+        lines.extend(["## 证据索引", ""])
+        for unit in visible_units:
+            lines.append(
+                f"[^{unit['unit_id']}]: 「{unit['text']}」 — `{unit['document_id']}` "
+                f"chars {unit['start']}:{unit['end']}"
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -78,8 +86,12 @@ def main() -> int:
     parser.add_argument("classified", type=Path)
     parser.add_argument("--date", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--audit-details", action="store_true",
+        help="show Evidence Unit status and the visible evidence footnote index",
+    )
     args = parser.parse_args()
-    output = render(load_classified(args.classified), args.date)
+    output = render(load_classified(args.classified), args.date, audit_details=args.audit_details)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_name(f".{args.output.name}.tmp")
     temporary.write_text(output, encoding="utf-8")

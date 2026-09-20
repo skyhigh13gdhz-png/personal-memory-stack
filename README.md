@@ -3,6 +3,7 @@
 V3 产品设计、停工线和质量门槛见 [DESIGN_V3.md](DESIGN_V3.md)；真实样本的 Gate A 结论见 [GATE_A_REVIEW.md](GATE_A_REVIEW.md)。
 候选 Claim 的提取、逐字验证、风险分流、人工确认和额度控制见 [CLAIM_PIPELINE.md](CLAIM_PIPELINE.md)。
 真实样本证明自由 Claim 抽取会遗漏事实；当前主线改为 Evidence Unit 全覆盖，结果见 [GATE_B_RESULTS_2026-09-20.md](GATE_B_RESULTS_2026-09-20.md)。
+日报的总分结构、语言风格、事实/分析边界和人类/审计双视图规范见 [DAILY_VIEW_V2_SPEC.md](DAILY_VIEW_V2_SPEC.md)。
 
 Gate A/B 评审工具：
 
