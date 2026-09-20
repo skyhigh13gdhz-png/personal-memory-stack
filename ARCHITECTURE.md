@@ -1,5 +1,7 @@
 # Personal Memory 架构设计记录
 
+> V3 调研、领域模型、质量门槛和停工线见 [DESIGN_V3.md](DESIGN_V3.md)。Gate A 评审通过前，本文后续的旧版 Vault/阶段设想不作为继续扩建授权。
+
 状态：V1 已部署并通过真实验收；V2.1 的 Document/timestamp/Patch 薄封装与 Markdown 原始记录投影已部署，附件链路待继续验证。
 更新日期：2026-09-20
 
