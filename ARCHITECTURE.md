@@ -1,6 +1,6 @@
 # Personal Memory 架构设计记录
 
-状态：V1 已部署并通过真实验收；V2.1 的 Document/timestamp/Patch 薄封装已部署，附件与 Markdown 投影待继续验证。
+状态：V1 已部署并通过真实验收；V2.1 的 Document/timestamp/Patch 薄封装与 Markdown 原始记录投影已部署，附件链路待继续验证。
 更新日期：2026-09-20
 
 ## 1. 项目目标
@@ -65,6 +65,7 @@ Cloudflare Tunnel → 127.0.0.1:8000
 - 管理 Gateway Token、client、bank、speaker 等隔离字段；
 - 通过 adapter 访问 Hindsight，不读取 Hindsight 内部数据库；
 - 已实现 Document 查询、speaker 隔离、同 Document 串行化和 CAS Patch；投影能力仍应从这里作薄封装。
+- 在 Retain 边界规范化上游契约：没有 `document_id` 的新记录忽略 `update_mode`；metadata 的非字符串值确定性转换为字符串，避免将 Hindsight 422 误表现为不透明的 502。
 
 #### `memory-mcp`
 
@@ -144,7 +145,7 @@ ChatGPT / Claude / Qwen / 其他入口
 | speaker / source / session | bank、tags、metadata | A05 小数据量查询/分页已验证 |
 | 图片和附件 | Document attachments | Hindsight 侧有能力，ChatGPT→MCP 链路未验证 |
 | 纠错 | 同 `document_id` replace / reprocess | A02 确认旧 memory 消失；审计历史仍需薄补丁 |
-| 人类可读文档 | Documents → Markdown | 尚未实现 |
+| 人类可读文档 | Documents → Markdown | 已实现按日只读投影，并自动同步到本机 Obsidian Vault |
 
 `Semantic Memory ≠ Raw Record` 仍然是有效判断；变化的是 Raw Record 不再默认必须由另一套 PostgreSQL 承担。
 

@@ -75,3 +75,33 @@ MCP 不暴露 Delete/Reprocess。审计已证明，运行中的异步 reprocess 
 - 精确识别并从人类投影排除 6 条既有部署 smoke 记录，不删除 Hindsight 源数据；
 - MCP smoke 已改为 `speaker=audit-mcp-core` + 稳定 `document_id=mcp-core-smoke`，后续部署不再污染个人记录；
 - 旧投影历史统一保留在隐藏 `.history` 目录，不与正式日记并列。
+
+## 8. ChatGPT Retain 502 事故与恢复
+
+### 现象
+
+ChatGPT 对 2026-09-18 原始记录连续两次调用 `memory_retain`，均收到 `502 Bad Gateway`。请求已到达 MCP 与 Gateway，故障不在 Cloudflare Tunnel。
+
+### 根因
+
+1. 新记录没有 `document_id`，但客户端传入了 `update_mode=append`；Hindsight 的 append 语义要求明确的目标 Document；
+2. Gateway 接受任意类型 metadata，而 Hindsight 要求 metadata 的值全部为字符串；布尔值会触发上游 HTTP 422，此前被 Gateway 统一表现为 502。
+
+### 修复
+
+| 仓库 | 提交 | 修复内容 |
+| --- | --- | --- |
+| `memory-gateway` | `6488d9a` | 无 `document_id` 时忽略 `update_mode`，并补充非正文诊断日志 |
+| `memory-mcp` | `e361900` | MCP 参数层同步约束，新记录不得使用 replace/append |
+| `memory-gateway` | `d7daaf4` | metadata 在 Gateway 边界确定性转换为字符串 |
+
+Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链路通过。原故障组合“无 `document_id` + append”回归为 HTTP 200。
+
+### 数据恢复
+
+- 稳定 Document ID：`liangzai-journal-2026-09-18`；
+- 事件时间：`2026-09-18T12:00:00+08:00`；
+- 写入结果：HTTP 200，实际处理约 39.3 秒；
+- 原始内容已完整保留，没有把失败重试制造成重复记录；
+- Obsidian 投影结果：源 Documents 7 份，可见个人记录 1 份，精确排除部署 smoke 记录 6 份；
+- 人类可读文件：`00-系统生成/原始记录/liangzai/2026-09-18.md`。
