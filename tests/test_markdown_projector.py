@@ -25,8 +25,36 @@ class ProjectorTests(unittest.TestCase):
         self.assertNotIn("time_source:", rendered)
         self.assertNotIn("sha256:", rendered)
         self.assertNotIn("## 23:30 ·", rendered)
+        self.assertIn("## 23:30", rendered)
         self.assertIn("<!-- personal-memory-record", rendered)
         self.assertEqual(manifest["documents"][0]["time_source"], "event_date")
+
+    def test_date_precision_does_not_render_placeholder_time(self):
+        documents = [{
+            "id": "doc-date-only",
+            "original_text": "跨越全天的记录",
+            "retain_params": {
+                "event_date": "2026-09-18T12:00:00+08:00",
+                "metadata": {"journal_time_precision": "date"},
+            },
+        }]
+        files, manifest = PROJECTOR.build_projection(documents, "Asia/Shanghai")
+        rendered = files["2026-09-18.md"]
+        self.assertIn("## 当日记录", rendered)
+        self.assertNotIn("## 12:00", rendered)
+        self.assertEqual(manifest["documents"][0]["time_precision"], "date")
+
+    def test_created_at_fallback_is_not_presented_as_event_time(self):
+        documents = [{
+            "id": "doc-created",
+            "original_text": "只有写入时间",
+            "created_at": "2026-09-19T18:00:00Z",
+        }]
+        files, manifest = PROJECTOR.build_projection(documents, "Asia/Shanghai")
+        rendered = files["2026-09-20.md"]
+        self.assertIn("## 当日记录", rendered)
+        self.assertNotIn("## 02:00", rendered)
+        self.assertEqual(manifest["documents"][0]["time_precision"], "date")
 
     def test_created_at_fallback_and_undated(self):
         documents = [

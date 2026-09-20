@@ -75,15 +75,24 @@ def parse_time(value: Any) -> datetime | None:
     return parsed
 
 
-def document_time(document: dict[str, Any]) -> tuple[datetime | None, str]:
+def document_metadata(document: dict[str, Any]) -> dict[str, Any]:
+    direct = document.get("document_metadata")
+    if isinstance(direct, dict):
+        return direct
+    retained = (document.get("retain_params") or {}).get("metadata")
+    return retained if isinstance(retained, dict) else {}
+
+
+def document_time(document: dict[str, Any]) -> tuple[datetime | None, str, bool]:
     event_date = (document.get("retain_params") or {}).get("event_date")
     parsed = parse_time(event_date)
     if parsed is not None:
-        return parsed, "event_date"
+        precision = str(document_metadata(document).get("journal_time_precision") or "").lower()
+        return parsed, "event_date", precision != "date"
     parsed = parse_time(document.get("created_at"))
     if parsed is not None:
-        return parsed, "created_at"
-    return None, "undated"
+        return parsed, "created_at", False
+    return None, "undated", False
 
 
 def render_day(day: str, entries: list[dict[str, Any]], zone: ZoneInfo) -> str:
@@ -99,7 +108,12 @@ def render_day(day: str, entries: list[dict[str, Any]], zone: ZoneInfo) -> str:
         if not isinstance(text, str):
             text = ""
         instant = entry["instant"]
-        label = instant.astimezone(zone).strftime("%H:%M") if instant else "时间未知"
+        if entry["show_time"] and instant:
+            label = instant.astimezone(zone).strftime("%H:%M")
+        elif instant:
+            label = "当日记录"
+        else:
+            label = "时间未知"
         document_id = str(document.get("id") or document.get("document_id") or entry["id"])
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         lines.extend([
@@ -144,18 +158,20 @@ def build_projection(
         if digest in excluded_sha256:
             excluded_documents.append({"id": document_id, "original_text_sha256": digest})
             continue
-        instant, time_source = document_time(document)
+        instant, time_source, show_time = document_time(document)
         day = instant.astimezone(zone).date().isoformat() if instant else "_undated"
         grouped.setdefault(day, []).append({
             "id": document_id,
             "instant": instant,
             "time_source": time_source,
+            "show_time": show_time,
             "document": document,
         })
         manifest_documents.append({
             "id": document_id,
             "day": day,
             "time_source": time_source,
+            "time_precision": "minute" if show_time else "date",
             "original_text_sha256": digest,
         })
 

@@ -64,6 +64,7 @@ GATEWAY_API_TOKEN='...' python3 scripts/project_markdown_journal.py \
 ```
 
 - 优先以 `retain_params.event_date` 归日，缺失时回退到 `created_at`，仍缺失则进入 `_undated.md`；
+- 只有明确的事件时刻才显示 `HH:MM`；仅知道日期时使用 metadata `journal_time_precision=date`，写入时间回退也不会冒充事件时间；
 - 每条记录保留 Document ID 和原文 SHA-256，原文置于动态 Markdown fence 内；
 - 默认拒绝覆盖已有输出；显式传 `--replace-output` 时，旧投影先改名为带 UTC 时间戳的 backup，不直接删除。
 
