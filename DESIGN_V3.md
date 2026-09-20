@@ -116,7 +116,7 @@ Subject 不等于任意 Hindsight Entity。
 ```text
 Subject
   subject_id
-  subject_type         person | project | health_track | habit | asset | strategy | goal | system
+  subject_type         person | pet | project | health_track | habit | asset | strategy | goal | system
   canonical_name, aliases[]
   lifecycle_status     candidate | active | archived | merged
   promotion_reason, created_at, confirmed_at?

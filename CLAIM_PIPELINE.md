@@ -85,3 +85,4 @@ python3 scripts/claim_candidate_pipeline.py export local-evaluation/candidates.j
 5. 单日调用次数、耗时和 token 成本。
 
 达不到关键事实召回率 95% 或人工审核负担过高时，不进入正式 Obsidian。
+召回率由 `scripts/evaluate_candidate_recall.py` 对比人工维护的必要证据片段；结构校验通过但召回率不足的候选包仍然不可投影。

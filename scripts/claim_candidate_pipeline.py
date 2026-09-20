@@ -25,7 +25,7 @@ SPEC.loader.exec_module(VALIDATOR)
 
 PIPELINE_VERSION = "claim-candidates-v1"
 PROMPT_VERSION = "claim-extractor-v2"
-HIGH_IMPACT_TYPES = {"person", "health_track", "habit", "asset", "strategy", "goal"}
+HIGH_IMPACT_TYPES = {"person", "pet", "health_track", "habit", "asset", "strategy", "goal"}
 HIGH_IMPACT_KINDS = {"state", "preference", "decision", "commitment"}
 
 

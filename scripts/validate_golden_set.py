@@ -13,7 +13,7 @@ from typing import Any
 
 KINDS = {"event", "state", "preference", "decision", "commitment", "metric"}
 STATUSES = {"asserted", "extracted", "inferred", "confirmed", "disputed", "retracted"}
-SUBJECT_TYPES = {"person", "project", "health_track", "habit", "asset", "strategy", "goal", "system"}
+SUBJECT_TYPES = {"person", "pet", "project", "health_track", "habit", "asset", "strategy", "goal", "system"}
 
 
 def load_json(path: Path) -> dict[str, Any]:
