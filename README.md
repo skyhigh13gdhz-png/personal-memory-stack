@@ -167,6 +167,13 @@ python3 scripts/render_daily_from_units.py \
 
 `extract` 子命令会把 Evidence Units 发送给配置的 LLM；处理个人数据前必须取得明确授权。`prepare --response` 可离线验证已保存响应。分类结果只改变栏目、摘要、显示范围和 Subject 候选关联；原文、字符区间、Document ID 与未分类回退始终保留。当前输出仍是私有评审预览，不自动写入 Hindsight 或正式 Obsidian。
 
+若 Provider 只把一个不透明 `unit_id` 抄错一个字符，校验器仅在候选唯一时安全对齐并记录修复；可用 `reconcile` 对已有分类包离线重算，不再次调用模型：
+
+```bash
+python3 scripts/classify_evidence_units.py reconcile \
+  local-evaluation/classified.json --output local-evaluation/classified-reconciled.json
+```
+
 ## 本地无副作用检查
 
 ```bash

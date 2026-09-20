@@ -78,6 +78,25 @@ class UnitClassifierTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["units_fallback"], 2)
         self.assertEqual(result["rejected_labels"][0]["error"], "unknown subject_id")
 
+    def test_uniquely_repairs_one_character_unit_id_error(self):
+        response = {"labels": [{
+            "unit_id": "unit1",
+            "category": "work_project",
+            "summary": "整理项目。",
+            "visibility": "daily",
+            "importance": "normal",
+            "subject_ids": [],
+        }]}
+        result = CLASSIFIER.classify_response(evidence_fixture(), response)
+        self.assertEqual(result["units"][0]["classification_status"], "classified")
+        self.assertEqual(result["label_repairs"], [{
+            "source_index": 0,
+            "field": "unit_id",
+            "from": "unit1",
+            "to": "unit-1",
+            "method": "unique_edit_distance_1",
+        }])
+
     def test_prompt_requires_exactly_one_label_for_every_unit(self):
         messages = CLASSIFIER.classification_messages(evidence_fixture())
         self.assertIn("每个 unit_id", messages[0]["content"])

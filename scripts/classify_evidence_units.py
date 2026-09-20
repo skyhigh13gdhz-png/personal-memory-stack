@@ -87,6 +87,33 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
+def _within_one_edit(left: str, right: str) -> bool:
+    if abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right)) <= 1
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    short_index = 0
+    skipped = 0
+    for character in longer:
+        if short_index < len(shorter) and shorter[short_index] == character:
+            short_index += 1
+        else:
+            skipped += 1
+            if skipped > 1:
+                return False
+    return True
+
+
+def _align_unit_id(unit_id: str, known_ids: set[str]) -> tuple[str, str | None]:
+    if unit_id in known_ids:
+        return unit_id, None
+    matches = [known for known in known_ids if _within_one_edit(unit_id, known)]
+    if len(matches) == 1:
+        return matches[0], "unique_edit_distance_1"
+    return unit_id, None
+
+
 def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(response, dict) or set(response) != {"labels"}:
         raise ValueError("classifier response must contain only labels")
@@ -97,12 +124,30 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
     subject_ids = {item["subject_id"] for item in evidence["subjects"]}
     accepted: dict[str, dict[str, Any]] = {}
     rejected = []
+    label_repairs = []
     allowed_keys = {"unit_id", "category", "summary", "visibility", "importance", "subject_ids"}
     for index, label in enumerate(labels):
         error = None
         if not isinstance(label, dict) or set(label) != allowed_keys:
             error = "invalid keys"
-        elif label.get("unit_id") not in unit_map:
+        else:
+            label = dict(label)
+            original_unit_id = label.get("unit_id")
+            if isinstance(original_unit_id, str):
+                aligned_unit_id, repair_method = _align_unit_id(original_unit_id, set(unit_map))
+                label["unit_id"] = aligned_unit_id
+                if repair_method:
+                    label_repairs.append({
+                        "source_index": index,
+                        "field": "unit_id",
+                        "from": original_unit_id,
+                        "to": aligned_unit_id,
+                        "method": repair_method,
+                    })
+        if error:
+            rejected.append({"source_index": index, "error": error, "raw_label": label})
+            continue
+        if label.get("unit_id") not in unit_map:
             error = "unknown unit_id"
         elif label["unit_id"] in accepted:
             error = "duplicate unit_id"
@@ -150,6 +195,7 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
         "subjects": evidence["subjects"],
         "units": classified_units,
         "rejected_labels": rejected,
+        "label_repairs": label_repairs,
         "coverage": {
             "units_total": len(classified_units),
             "units_classified": sum(item["classification_status"] == "classified" for item in classified_units),
@@ -183,10 +229,35 @@ def main() -> int:
     prepare.add_argument("evidence", type=Path)
     prepare.add_argument("--response", required=True, type=Path)
     prepare.add_argument("--output", required=True, type=Path)
+    reconcile = subparsers.add_parser("reconcile")
+    reconcile.add_argument("classified", type=Path)
+    reconcile.add_argument("--output", required=True, type=Path)
     extract = subparsers.add_parser("extract")
     extract.add_argument("evidence", type=Path)
     extract.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    if args.command == "reconcile":
+        previous = json.loads(args.classified.read_text(encoding="utf-8"))
+        if previous.get("schema_version") != "classified-evidence-v1":
+            raise ValueError("reconcile input must be classified-evidence-v1")
+        labels = [
+            {key: unit[key] for key in (
+                "unit_id", "category", "summary", "visibility", "importance", "subject_ids"
+            )}
+            for unit in previous["units"]
+            if unit["classification_status"] == "classified"
+        ]
+        labels.extend(item["raw_label"] for item in previous.get("rejected_labels", []))
+        result = classify_response(previous, {"labels": labels})
+        result["llm_run"] = {**previous.get("llm_run", {}), "reconciled_without_llm": True}
+        PIPELINE.write_json_atomic(args.output, result)
+        coverage = result["coverage"]
+        print(
+            f"[✓] reconciled without LLM: classified {coverage['units_classified']}, "
+            f"fallback {coverage['units_fallback']}: {args.output}"
+        )
+        return 0
+
     evidence = load_units(args.evidence)
 
     if args.command == "baseline":
