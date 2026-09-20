@@ -67,10 +67,11 @@ Retain（抽取、整理记忆）       → 智谱 `glm-4.5-air`
 Reflect（跨记录综合与推理）    → Codex `gpt-5.6-luna`
 Recall（检索）                 → 不调用 LLM
 Embedding（向量化）            → 本地模型
-Consolidation / Mental Model   → 暂时继承全局 Codex
+Consolidation（合并、去重）     → 智谱 `glm-4.5-air`
+Mental Model Refresh           → 暂时继承全局 Codex
 ```
 
-选择 Retain 作为首个迁移点，是因为它通常是高频、结构化任务，适合先用成本更低的模型承接；Reflect 决定综合分析质量，先保留 Codex 作为质量基线。首轮 A/B 明确关闭 Retain 自动重试与跨 Provider fallback，避免智谱失败后静默回退 Codex，使成本、时延和质量数据失真。验证通过后再决定是否加入“智谱主、Codex 备”的容灾链路。
+选择 Retain 作为首个迁移点，是因为它通常是高频、结构化任务，适合先用成本更低的模型承接；首轮验证通过后，后台 Consolidation 也已迁移到同一智谱模型。Reflect 决定综合分析质量，继续保留 Codex 作为质量基线。各智谱操作关闭跨 Provider fallback，避免失败后静默回退 Codex，使成本、时延和质量数据失真。稳定观察后再决定是否加入“智谱主、Codex 备”的容灾链路。
 
 智谱国内开放平台使用 `https://open.bigmodel.cn/api/paas/v4`；Hindsight 文档中的 `zai` 默认地址是国际站，不能在未确认 Key 所属平台时混用。API Key 只写入服务器 root-only 环境文件，不进入 Git、日志或命令历史。
 
