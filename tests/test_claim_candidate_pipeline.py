@@ -45,6 +45,13 @@ class ClaimCandidatePipelineTests(unittest.TestCase):
         self.bundle = PIPELINE.load_bundle(FIXTURE)
         self.documents = PIPELINE.resolve_documents(self.bundle, FIXTURE.parent)
 
+    def test_prompt_requires_temporal_and_continuity_coverage(self):
+        messages = PIPELINE.extraction_messages(self.bundle, self.documents)
+        system = messages[0]["content"]
+        self.assertIn("日回顾或持续脉络", system)
+        self.assertIn("宠物的稳定档案", system)
+        self.assertIn("早餐、午餐、晚餐是不同事实", system)
+
     def test_rejects_non_verbatim_quote(self):
         response = response_for_fixture()
         response["claims"][0]["evidence"][0]["quote"] = "并不存在的原文"
