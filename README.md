@@ -183,6 +183,8 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
   --output local-evaluation/daily-v2.md
 ```
 
+`scripts/daily_v2_pipeline.py` 提供离线 `prepare` 和需明确数据授权的 `extract`。Provider 请求使用 `u01` 等短别名，返回后再映射为稳定 Evidence Unit ID；风格文件、模型、Prompt 版本和输入单元共同进入缓存哈希，无变化时不重复调用。示例风格配置见 `config/daily-style.example.json`。
+
 ## 本地无副作用检查
 
 ```bash
