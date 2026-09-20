@@ -81,7 +81,7 @@ bash scripts/install_macos_obsidian_sync.sh
 
 ## 历史 Markdown 导入
 
-`scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。
+`scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入；过长日记可按已有章节拆成 `YYYY-MM-DD--slug.md`，仍归入同一天。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。
 
 当前由 Codex 协助维护和导入的个人记录统一使用稳定身份 `speaker=liangzai`；导入器也以此为默认值，不根据正文内容猜测身份。
 

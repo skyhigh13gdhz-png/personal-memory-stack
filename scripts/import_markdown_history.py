@@ -19,7 +19,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 
-DATE_FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
+DATE_FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:--([a-z0-9_-]+))?\.md$")
 AI_ANNOTATION = re.compile(r"^#{1,6}\s*(GPT|AI)\s*(注解|观察|分析)", re.MULTILINE | re.IGNORECASE)
 
 
@@ -80,6 +80,7 @@ def read_candidates(input_dir: Path, speaker: str) -> list[dict[str, Any]]:
         if not match:
             continue
         day = match.group(1)
+        slug = match.group(2)
         datetime.strptime(day, "%Y-%m-%d")
         content = path.read_text(encoding="utf-8").strip()
         if not content:
@@ -91,7 +92,7 @@ def read_candidates(input_dir: Path, speaker: str) -> list[dict[str, Any]]:
             "day": day,
             "content": content,
             "sha256": digest,
-            "document_id": f"obsidian-daily-{speaker}-{day}",
+            "document_id": f"obsidian-daily-{speaker}-{day}" + (f"--{slug}" if slug else ""),
             "contains_ai_annotation": bool(AI_ANNOTATION.search(content)),
         })
     return candidates
