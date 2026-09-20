@@ -122,6 +122,17 @@ def _align_unit_id(unit_id: str, known_ids: set[str]) -> tuple[str, str | None]:
     return unit_id, None
 
 
+def merge_repair_logs(previous: list[dict[str, Any]], current: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = []
+    seen = set()
+    for item in previous + current:
+        identity = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if identity not in seen:
+            seen.add(identity)
+            merged.append(item)
+    return merged
+
+
 def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(response, dict) or set(response) != {"labels"}:
         raise ValueError("classifier response must contain only labels")
@@ -274,6 +285,9 @@ def main() -> int:
         ]
         labels.extend(item["raw_label"] for item in previous.get("rejected_labels", []))
         result = classify_response(previous, {"labels": labels})
+        result["label_repairs"] = merge_repair_logs(
+            previous.get("label_repairs", []), result.get("label_repairs", [])
+        )
         result["llm_run"] = {**previous.get("llm_run", {}), "reconciled_without_llm": True}
         PIPELINE.write_json_atomic(args.output, result)
         coverage = result["coverage"]

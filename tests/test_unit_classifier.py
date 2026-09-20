@@ -108,6 +108,14 @@ class UnitClassifierTests(unittest.TestCase):
         self.assertEqual(result["units"][0]["visibility"], "archive")
         self.assertEqual(result["coverage"]["units_structural"], 1)
 
+    def test_repair_logs_are_preserved_and_deduplicated(self):
+        repair = {"field": "unit_id", "from": "bad", "to": "good"}
+        other = {"field": "unit_id", "from": "old", "to": "new"}
+        self.assertEqual(
+            CLASSIFIER.merge_repair_logs([repair], [repair, other]),
+            [repair, other],
+        )
+
     def test_prompt_requires_exactly_one_label_for_every_unit(self):
         messages = CLASSIFIER.classification_messages(evidence_fixture())
         self.assertIn("每个 unit_id", messages[0]["content"])
