@@ -185,6 +185,10 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
 
 `scripts/daily_v2_pipeline.py` 提供离线 `prepare` 和需明确数据授权的 `extract`。Provider 请求使用 `u01` 等短别名，返回后再映射为稳定 Evidence Unit ID；风格文件、模型、Prompt 版本和输入单元共同进入缓存哈希，无变化时不重复调用。示例风格配置见 `config/daily-style.example.json`。
 
+`scripts/score_daily_v2.py` 对证据覆盖、固定信息架构、事实/分析边界、语言风格和可读性做 100 分质量检查；低于 85 分、违反结构门禁或命中禁用书面词的结果不允许由 pipeline 写出。评分是交付门禁，不替代人工阅读验收。
+
+持续脉络先走零 LLM 候选层：`scripts/build_continuity_candidates.py` 只汇集与已确认 Subject 明确关联的 Evidence Units，`scripts/render_continuity_candidate_review.py` 生成待勾选评审页。候选默认 `pending` 且禁止更新当前状态；完整设计见 [CONTINUITY_VIEW_V1_SPEC.md](CONTINUITY_VIEW_V1_SPEC.md)。
+
 ## 本地无副作用检查
 
 ```bash

@@ -26,7 +26,8 @@ def load_module(name: str, path: Path):
 
 CLAIMS = load_module("claim_candidate_pipeline", SCRIPT_DIR / "claim_candidate_pipeline.py")
 EDITORIAL = load_module("render_daily_v2_editorial", SCRIPT_DIR / "render_daily_v2_editorial.py")
-PROMPT_VERSION = "daily-editorial-v2"
+SCORER = load_module("score_daily_v2", SCRIPT_DIR / "score_daily_v2.py")
+PROMPT_VERSION = "daily-editorial-v2.1"
 
 
 def load_classified(path: Path) -> dict[str, Any]:
@@ -112,13 +113,33 @@ def source_hash(classified: dict[str, Any], day: str, style: dict[str, Any], mod
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def package(editorial: dict[str, Any], classified: dict[str, Any], *, run: dict[str, Any]) -> dict[str, Any]:
+def package(editorial: dict[str, Any], classified: dict[str, Any], style: dict[str, Any], *, run: dict[str, Any]) -> dict[str, Any]:
     metrics = EDITORIAL.validate(editorial, classified)
+    quality = SCORER.score(editorial, classified, style)
+    if not quality["passed"]:
+        raise ValueError(f"daily v2 quality gate failed: score={quality['score']} failures={quality['hard_failures']}")
     return {
         **editorial,
         "generation": run,
         "validation": metrics,
+        "quality": quality,
     }
+
+
+def quarantine_path(output: Path) -> Path:
+    return output.with_name(f"{output.stem}-rejected.json")
+
+
+def write_rejection(output: Path, editorial: dict[str, Any], run: dict[str, Any], error: Exception) -> Path:
+    path = quarantine_path(output)
+    CLAIMS.write_json_atomic(path, {
+        "schema_version": "daily-v2-rejected-v1",
+        "generation": run,
+        "validation_error": f"{type(error).__name__}: {error}",
+        "response": editorial,
+    })
+    path.chmod(0o600)
+    return path
 
 
 def main() -> int:
@@ -139,7 +160,7 @@ def main() -> int:
     if args.command == "prepare":
         response = json.loads(args.response.read_text(encoding="utf-8"))
         editorial = expand_aliases(response, aliases)
-        result = package(editorial, classified, run={
+        result = package(editorial, classified, style, run={
             "mode": "offline-response", "calls": 0, "prompt_version": PROMPT_VERSION
         })
     else:
@@ -162,10 +183,15 @@ def main() -> int:
                 return 0
         response, metrics = CLAIMS.request_llm(base_url, api_key, model, messages(classified, args.date, style))
         editorial = expand_aliases(response, aliases)
-        result = package(editorial, classified, run={
+        run = {
             "mode": "live", "calls": 1, "prompt_version": PROMPT_VERSION,
             "model": model, "input_hash": digest, **metrics,
-        })
+        }
+        try:
+            result = package(editorial, classified, style, run=run)
+        except Exception as exc:
+            rejected = write_rejection(args.output, editorial, run, exc)
+            raise ValueError(f"daily v2 rejected and quarantined at {rejected}: {exc}") from exc
     CLAIMS.write_json_atomic(args.output, result)
     print(f"[✓] wrote validated daily-v2 editorial package: {args.output}")
     return 0

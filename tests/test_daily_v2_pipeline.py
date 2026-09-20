@@ -1,4 +1,5 @@
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -59,6 +60,16 @@ class DailyV2PipelineTests(unittest.TestCase):
         first = PIPELINE.source_hash(classified_fixture(), "2026-01-01", {"tone": "自然"}, "model")
         second = PIPELINE.source_hash(classified_fixture(), "2026-01-01", {"tone": "书面"}, "model")
         self.assertNotEqual(first, second)
+
+    def test_rejected_response_is_quarantined_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "daily.json"
+            rejected = PIPELINE.write_rejection(
+                output, {"bad": True}, {"calls": 1}, ValueError("quality failed")
+            )
+            self.assertFalse(output.exists())
+            self.assertTrue(rejected.exists())
+            self.assertIn("quality failed", rejected.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
