@@ -1,0 +1,22 @@
+{
+  "subjects": [
+    {
+      "subject_id": "project:personal-memory",
+      "subject_type": "project",
+      "canonical_name": "AI 外置记忆",
+      "promotion_reason": "用户确认的持续项目，有明确生命周期和交付。"
+    },
+    {
+      "subject_id": "health:sleep-energy",
+      "subject_type": "health_track",
+      "canonical_name": "睡眠与精力",
+      "promotion_reason": "用户确认的健康跟踪维度；只做陈述，不自动诊断或归因。"
+    },
+    {
+      "subject_id": "strategy:crypto-trading-rhythm",
+      "subject_type": "strategy",
+      "canonical_name": "加密交易节奏",
+      "promotion_reason": "用户确认的高影响策略跟踪维度；状态更新必须人工确认。"
+    }
+  ]
+}

@@ -49,6 +49,11 @@ LLM 无权：
 ## 4. 本地操作
 
 ```bash
+# 先从 Gateway Date Range 生成当日完整私有输入
+python3 scripts/build_claim_input.py --date 2026-09-20 \
+  --subjects config/subjects.example.json \
+  --output local-evaluation/2026-09-20-input.json
+
 # 首次提取：默认使用智谱兼容接口，也可用 CLAIM_LLM_* 覆盖
 python3 scripts/claim_candidate_pipeline.py extract local-evaluation/input.json \
   --output local-evaluation/candidates.json
