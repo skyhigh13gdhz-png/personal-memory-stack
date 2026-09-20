@@ -62,6 +62,23 @@ class ClaimCandidatePipelineTests(unittest.TestCase):
                 subjects=self.bundle["subjects"],
             )
 
+    def test_uniquely_aligns_equivalent_punctuation_to_original(self):
+        response = response_for_fixture()
+        response["claims"][0]["evidence"][0]["quote"] = "上午9:00开始整理项目“需求”。"
+        documents = json.loads(json.dumps(self.documents))
+        documents[0]["original_text"] = "上午9:00开始整理项目\"需求\"。下午3:00测试了新的导出流程。"
+        candidates = PIPELINE.validate_model_claims(
+            {"claims": [response["claims"][0]]},
+            documents=documents,
+            subjects=self.bundle["subjects"],
+        )
+        self.assertEqual(candidates[0]["evidence"][0]["quote"], '上午9:00开始整理项目"需求"。')
+        self.assertEqual(candidates[0]["evidence_repairs"][0]["method"], "punctuation_unique")
+
+    def test_normalized_alignment_still_rejects_missing_word(self):
+        with self.assertRaisesRegex(ValueError, "cannot be uniquely aligned"):
+            PIPELINE.align_quote_verbatim("下午聊了项目", "之后下午聊了新项目")
+
     def test_rejects_unknown_subject(self):
         response = response_for_fixture()
         response["claims"][0]["subject_ids"] = ["project:invented"]

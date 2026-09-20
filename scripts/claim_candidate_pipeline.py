@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -27,6 +28,17 @@ PIPELINE_VERSION = "claim-candidates-v1"
 PROMPT_VERSION = "claim-extractor-v3"
 HIGH_IMPACT_TYPES = {"person", "pet", "health_track", "habit", "asset", "strategy", "goal"}
 HIGH_IMPACT_KINDS = {"state", "preference", "decision", "commitment"}
+PUNCTUATION_EQUIVALENTS = str.maketrans({
+    "“": '"',
+    "”": '"',
+    "‘": "'",
+    "’": "'",
+    "：": ":",
+    "；": ";",
+    "，": ",",
+    "！": "!",
+    "？": "?",
+})
 
 
 def load_bundle(path: Path) -> dict[str, Any]:
@@ -152,6 +164,20 @@ def _candidate_id(claim: dict[str, Any]) -> str:
     return "cand-" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def align_quote_verbatim(quote: str, source: str) -> tuple[str, str]:
+    if quote in source:
+        return quote, "exact"
+    normalized_quote = quote.translate(PUNCTUATION_EQUIVALENTS)
+    normalized_source = source.translate(PUNCTUATION_EQUIVALENTS)
+    first = normalized_source.find(normalized_quote)
+    if first < 0 or normalized_source.find(normalized_quote, first + 1) >= 0:
+        raise ValueError("quote cannot be uniquely aligned by punctuation normalization")
+    repaired = source[first:first + len(quote)]
+    if repaired.translate(PUNCTUATION_EQUIVALENTS) != normalized_quote:
+        raise ValueError("normalized quote alignment changed source length")
+    return repaired, "punctuation_unique"
+
+
 def validate_model_claims(
     response: dict[str, Any],
     *,
@@ -168,7 +194,9 @@ def validate_model_claims(
     output = []
     seen: set[str] = set()
     allowed_keys = {"kind", "summary", "valid_date", "subject_ids", "evidence"}
-    for index, claim in enumerate(claims):
+    for index, raw_claim in enumerate(claims):
+        claim = copy.deepcopy(raw_claim)
+        evidence_repairs = []
         if not isinstance(claim, dict) or set(claim) != allowed_keys:
             raise ValueError(f"claims[{index}] has invalid keys")
         if claim["kind"] not in VALIDATOR.KINDS:
@@ -193,8 +221,22 @@ def validate_model_claims(
                 raise ValueError(f"claims[{index}] references unknown document: {document_id}")
             if claim["valid_date"] != document_map[document_id]["date"]:
                 raise ValueError(f"claims[{index}] valid_date differs from its evidence document")
-            if not isinstance(quote, str) or not quote.strip() or quote not in document_map[document_id]["original_text"]:
+            if not isinstance(quote, str) or not quote.strip():
                 raise ValueError(f"claims[{index}].evidence[{evidence_index}] is not a verbatim quote")
+            try:
+                aligned, method = align_quote_verbatim(quote, document_map[document_id]["original_text"])
+            except ValueError as exc:
+                raise ValueError(
+                    f"claims[{index}].evidence[{evidence_index}] is not a verbatim quote: {exc}"
+                ) from exc
+            if method != "exact":
+                evidence_repairs.append({
+                    "evidence_index": evidence_index,
+                    "method": method,
+                    "model_quote": quote,
+                    "aligned_quote": aligned,
+                })
+                evidence["quote"] = aligned
         normalized = {
             "kind": claim["kind"],
             "summary": claim["summary"].strip(),
@@ -214,6 +256,7 @@ def validate_model_claims(
             "policy": "manual_review" if manual else "auto_accept_eligible",
             "review_status": "pending",
             "review_note": "",
+            "evidence_repairs": evidence_repairs,
         })
     return output
 
