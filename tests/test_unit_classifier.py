@@ -82,7 +82,9 @@ class UnitClassifierTests(unittest.TestCase):
         messages = CLASSIFIER.classification_messages(evidence_fixture())
         self.assertIn("每个 unit_id", messages[0]["content"])
         self.assertIn("不得遗漏、增加或合并 ID", messages[0]["content"])
+        self.assertIn("context_before 只用于消解", messages[0]["content"])
         self.assertIn('"unit_id":"unit-2"', messages[1]["content"])
+        self.assertIn('"context_before":"整理记忆项目。"', messages[1]["content"])
 
 
 if __name__ == "__main__":

@@ -53,13 +53,22 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
         }
         for item in evidence["subjects"]
     ]
-    units = [{"unit_id": item["unit_id"], "text": item["text"]} for item in evidence["units"]]
+    units = []
+    previous_by_document: dict[str, str] = {}
+    for item in evidence["units"]:
+        units.append({
+            "unit_id": item["unit_id"],
+            "text": item["text"],
+            "context_before": previous_by_document.get(item["document_id"], ""),
+        })
+        previous_by_document[item["document_id"]] = item["text"]
     return [
         {
             "role": "system",
             "content": (
                 "你是 Evidence Unit 分类器，不负责决定是否保留事实。必须为输入中的每个 unit_id 返回且只返回一项，"
                 "不得遗漏、增加或合并 ID。summary 只能保守压缩当前 unit，不得加入外部信息或因果推断。"
+                "context_before 只用于消解当前 unit 的代词、主体或上下文，不得把前文事实重复写入 summary。"
                 "category 只能是 sleep_body/food/exercise/work_project/trading_finance/"
                 "relationships_home/pet/leisure/other。visibility 只能是 daily/continuity/both/archive。"
                 "importance 只能是 low/normal/high。subject_ids 只能使用允许列表；没有直接关联时返回空数组。"
