@@ -102,7 +102,32 @@ python3 scripts/import_markdown_history.py \
 
 当前 Retain、Reflect 和 Consolidation 均走智谱 `glm-4.5-air`，Embedding 留在本地；Mental Model Refresh 仍继承全局 Codex 路由。实现位于 `memory-server-infra/scripts/09-configure-llm-routing.sh`，总编排仓只记录架构和调用边界，不保存任何模型凭据。智谱路由不启用跨 Provider fallback，便于准确衡量成功率、时延、质量和实际额度消耗。
 
-Recall 的 `max_results` 只限制本次返回的 Top-K 数量，不影响已存数据。完整按日期的分析应使用 Document Date Range，原始 Obsidian Markdown 同步使用 `bash scripts/sync_obsidian_vault.sh`，该过程不调用 LLM。日报/周报/月报生成器尚未实现，下一阶段先实现版本化、幂等的 `daily-v1` 固定模板。
+Recall 的 `max_results` 只限制本次返回的 Top-K 数量，不影响已存数据。完整按日期的分析应使用 Document Date Range，原始 Obsidian Markdown 同步使用 `bash scripts/sync_obsidian_vault.sh`，该过程不调用 LLM。`daily-v1` 单日生成器已实现；周报和月报尚未实现。
+
+## daily-v1 日报
+
+`scripts/build_daily_v1.py` 已实现单日日报的固定流程：
+
+1. 通过 Gateway Document Date Range 读取当日全部原文；
+2. 计算排序无关的 source SHA-256；
+3. 要求 LLM 只返回 `daily-v1` 固定 JSON Schema；
+4. 校验 Schema 后由程序确定性渲染 Markdown；
+5. 原文、模板版本未变时跳过重新生成。
+
+在服务器上运行：
+
+```bash
+set -a
+source /opt/src/memory-gateway/.env
+source /opt/memory-server-infra/hindsight/.env
+set +a
+python3 scripts/build_daily_v1.py \
+  --date 2026-09-17 \
+  --speaker liangzai \
+  --output /path/to/daily/2026-09-17.md
+```
+
+默认复用 Hindsight Retain 的智谱 Key、Base URL 和 Model；可以用 `DAILY_LLM_API_KEY`、`DAILY_LLM_BASE_URL`、`DAILY_LLM_MODEL` 单独覆盖。运行时会把当日原始记录发送给所配置的 LLM Provider，必须先确认该数据处理边界。生成日报默认不 Retain 回记忆库。
 
 ## 本地无副作用检查
 
