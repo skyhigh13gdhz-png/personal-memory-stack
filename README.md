@@ -81,6 +81,10 @@ bash scripts/install_macos_obsidian_sync.sh
 
 中国大陆服务器的代理分两层：`proxy_on` 只影响当前 shell 的 `curl/git/pip`；Docker 镜像由 Docker daemon 自己的代理配置负责。首次 Hindsight 拉取包含大镜像层且解压后占用数 GB，后续重复安装命中本地缓存会明显更快。
 
+## Hindsight 多 LLM 路由
+
+第一阶段采用“Retain 走智谱 GLM、Reflect 继续走 Codex、Embedding 留在本地”的可回滚配置。实现位于 `memory-server-infra/scripts/09-configure-llm-routing.sh`，总编排仓只记录架构和调用边界，不保存任何模型凭据。首轮验证不启用跨 Provider fallback，以便准确衡量智谱的成功率、时延、质量和实际额度消耗。
+
 ## 本地无副作用检查
 
 ```bash
