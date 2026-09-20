@@ -60,6 +60,7 @@ class UnitClassifierTests(unittest.TestCase):
             "units_total": 2,
             "units_classified": 1,
             "units_fallback": 1,
+            "units_structural": 0,
             "units_preserved": 2,
         })
         self.assertEqual(result["units"][1]["summary"], "晚上吃面条。")
@@ -96,6 +97,16 @@ class UnitClassifierTests(unittest.TestCase):
             "to": "unit-1",
             "method": "unique_edit_distance_1",
         }])
+
+    def test_structural_heading_is_preserved_but_not_sent_for_classification(self):
+        evidence = evidence_fixture()
+        evidence["units"][0]["text"] = "今天的一些记录："
+        messages = CLASSIFIER.classification_messages(evidence)
+        self.assertNotIn('"unit_id":"unit-1"', messages[1]["content"])
+        result = CLASSIFIER.classify_response(evidence, {"labels": []})
+        self.assertEqual(result["units"][0]["classification_status"], "structural")
+        self.assertEqual(result["units"][0]["visibility"], "archive")
+        self.assertEqual(result["coverage"]["units_structural"], 1)
 
     def test_prompt_requires_exactly_one_label_for_every_unit(self):
         messages = CLASSIFIER.classification_messages(evidence_fixture())

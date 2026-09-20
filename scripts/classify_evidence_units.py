@@ -35,6 +35,11 @@ VISIBILITIES = {"daily", "continuity", "both", "archive"}
 IMPORTANCES = {"low", "normal", "high"}
 
 
+def is_structural_heading(text: str) -> bool:
+    stripped = text.strip()
+    return len(stripped) <= 24 and stripped.endswith(("：", ":"))
+
+
 def load_units(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("schema_version") != "evidence-units-v1":
@@ -56,6 +61,9 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
     units = []
     previous_by_document: dict[str, str] = {}
     for item in evidence["units"]:
+        if is_structural_heading(item["text"]):
+            previous_by_document[item["document_id"]] = item["text"]
+            continue
         units.append({
             "unit_id": item["unit_id"],
             "text": item["text"],
@@ -121,6 +129,9 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
     if not isinstance(labels, list):
         raise ValueError("labels must be an array")
     unit_map = {item["unit_id"]: item for item in evidence["units"]}
+    structural_ids = {
+        item["unit_id"] for item in evidence["units"] if is_structural_heading(item["text"])
+    }
     subject_ids = {item["subject_id"] for item in evidence["subjects"]}
     accepted: dict[str, dict[str, Any]] = {}
     rejected = []
@@ -146,6 +157,8 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
                     })
         if error:
             rejected.append({"source_index": index, "error": error, "raw_label": label})
+            continue
+        if label.get("unit_id") in structural_ids:
             continue
         if label.get("unit_id") not in unit_map:
             error = "unknown unit_id"
@@ -175,6 +188,17 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
 
     classified_units = []
     for unit in evidence["units"]:
+        if unit["unit_id"] in structural_ids:
+            classified_units.append({
+                **unit,
+                "category": "other",
+                "summary": unit["text"],
+                "visibility": "archive",
+                "importance": "low",
+                "subject_ids": [],
+                "classification_status": "structural",
+            })
+            continue
         label = accepted.get(unit["unit_id"])
         if label is None:
             classified_units.append({
@@ -200,6 +224,7 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
             "units_total": len(classified_units),
             "units_classified": sum(item["classification_status"] == "classified" for item in classified_units),
             "units_fallback": sum(item["classification_status"] == "unclassified" for item in classified_units),
+            "units_structural": sum(item["classification_status"] == "structural" for item in classified_units),
             "units_preserved": len(classified_units),
         },
     }
@@ -254,7 +279,7 @@ def main() -> int:
         coverage = result["coverage"]
         print(
             f"[✓] reconciled without LLM: classified {coverage['units_classified']}, "
-            f"fallback {coverage['units_fallback']}: {args.output}"
+            f"fallback {coverage['units_fallback']}, structural {coverage['units_structural']}: {args.output}"
         )
         return 0
 
@@ -296,7 +321,8 @@ def main() -> int:
     coverage = result["coverage"]
     print(
         f"[✓] preserved {coverage['units_preserved']}/{coverage['units_total']} units; "
-        f"classified {coverage['units_classified']}, fallback {coverage['units_fallback']}: {args.output}"
+        f"classified {coverage['units_classified']}, fallback {coverage['units_fallback']}, "
+        f"structural {coverage['units_structural']}: {args.output}"
     )
     return 0
 
