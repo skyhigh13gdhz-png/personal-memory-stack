@@ -298,7 +298,7 @@ Session Close
 
 ### Phase 4：Markdown Journal
 
-状态：最小只读投影器已实现，并使用隔离审计 bank 在服务器验收；Obsidian 真实 Vault 布局与同步仍待验证。
+状态：最小只读投影器已实现；隔离审计 bank 和本机真实 Obsidian Vault 均已验收。macOS LaunchAgent 每小时投影 `speaker=liangzai`，无变化时跳过，变化时替换并保留上一版。
 
 - 先生成按日排列的原始记录；
 - 验证 Obsidian 可读；

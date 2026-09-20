@@ -49,6 +49,10 @@ PY
 mkdir -p "$(dirname "$TARGET")"
 BACKUP=""
 if [[ -e "$TARGET" ]]; then
+  if diff -qr "$TARGET" "$LOCAL_STAGE" >/dev/null; then
+    echo "[✓] Obsidian 投影无变化，无需替换: $TARGET"
+    exit 0
+  fi
   BACKUP="${TARGET}.backup-$(date -u +%Y%m%dT%H%M%SZ)"
   [[ ! -e "$BACKUP" ]] || BACKUP="${BACKUP}-$$"
   mv "$TARGET" "$BACKUP"

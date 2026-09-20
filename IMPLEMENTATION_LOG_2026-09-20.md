@@ -57,3 +57,13 @@ MCP 不暴露 Delete/Reprocess。审计已证明，运行中的异步 reprocess 
 2. Correction Log 尚未实现，当前 Patch 只保证当前值的确定性，不提供完整业务修订史；
 3. Markdown Journal 最小投影已落地为 `scripts/project_markdown_journal.py`；隔离审计 bank 实机验收为 6 份 Documents 生成 2 份按日 Markdown，默认覆盖保护和带备份替换均 PASS；
 4. 投影跑通后再决定 Correction Log、Session 和 Asset 层是否真有必要。
+
+## 6. Obsidian 自动接入
+
+- Vault：`/Users/weizhenliang/obsidian空间`；
+- 生成目录：`AI/AI外置记忆/00-系统生成/原始记录/liangzai`；
+- 首次真实投影：6 份 Documents → 2 份按日 Markdown；
+- LaunchAgent：`com.skyhighmonica.personal-memory-journal`，每 3600 秒执行；
+- 首次后台执行：exit code 0；
+- 无变化重跑：跳过替换，backup 数量保持不变；
+- 安全边界：Gateway Token 不离开服务器，Vault 的其他未提交内容和 Git 历史均未修改。
