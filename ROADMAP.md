@@ -29,7 +29,7 @@
 ## P1.6 生产闭环与可靠性（当前最高优先级）
 
 - [ ] 安装日常增量任务：同步原始记录、生成缺失 Daily V2、刷新对象候选和状态页
-- [ ] 追踪异步 Retain operation：区分已受理、处理中、成功和失败
+- [x] 追踪异步 Retain operation：按 Speaker 安全区分已受理、处理中、成功和失败
 - [ ] 为 Retain 增加持久化幂等键，防止客户端重试再次生成重复 Document
 - [ ] 对失败任务执行有界重试；超过上限进入隔离并在状态页告警
 - [ ] 状态页补充待处理 operation、缺失日报、隔离件、未晋升 Claim 和过期对象
@@ -78,6 +78,15 @@
 - [ ] 周期内对象变化摘要，并引用对应 Claim / Evidence
 - [ ] 日报、周期回顾和长期对象之间的双向引用关系
 - [ ] 月报：积累足够稳定周报后再落地，避免重新从原始记录重复推理
+
+## 已完成里程碑：异步 Retain 状态闭环
+
+- 已核实生产环境 Hindsight `0.10.0` 的 operation 状态接口；状态包含 `pending`、`processing`、`completed`、`failed`、`cancelled` 和 `not_found`。
+- `memory-gateway` 新增按 Speaker 隔离的 operation 查询接口，只返回状态、进度、重试和时间信息，不泄露任务原文或内部 payload。
+- `memory-mcp` 新增 `memory_operation_get`，客户端可区分“异步已受理”和“最终写入成功”，不再把超时或已受理误报为完成。
+- 最终 `status` 是成功与否的权威字段；任务重试后成功时，`last_error` 可能仍保留历史失败，供诊断使用，不能据此覆盖最终状态。
+- 已部署并验收提交：`memory-gateway@298abb2`、`memory-mcp@178792e`；正确 Speaker 可查询，错误 Speaker 返回 `404`。
+- 本里程碑只解决“已知 operation ID 的安全查询”；operation 自动汇总、失败告警和持久化幂等仍按 P1.6 继续实施。
 
 ## 最近执行顺序
 
