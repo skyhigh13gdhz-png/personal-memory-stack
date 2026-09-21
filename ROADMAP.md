@@ -30,7 +30,7 @@
 
 - [ ] 安装日常增量任务：同步原始记录、生成缺失 Daily V2、刷新对象候选和状态页
 - [x] 追踪异步 Retain operation：按 Speaker 安全区分已受理、处理中、成功和失败
-- [ ] 为 Retain 增加持久化幂等键，防止客户端重试再次生成重复 Document
+- [x] 为 Retain 增加持久化幂等键与短窗口自动去重，防止客户端重试再次生成重复 Document
 - [ ] 对失败任务执行有界重试；超过上限进入隔离并在状态页告警
 - [ ] 状态页补充待处理 operation、缺失日报、隔离件、未晋升 Claim 和过期对象
 - [ ] 完成至少一个自然日的无人值守验收，确认无需人工刷新或重复授权
@@ -86,11 +86,21 @@
 - `memory-mcp` 新增 `memory_operation_get`，客户端可区分“异步已受理”和“最终写入成功”，不再把超时或已受理误报为完成。
 - 最终 `status` 是成功与否的权威字段；任务重试后成功时，`last_error` 可能仍保留历史失败，供诊断使用，不能据此覆盖最终状态。
 - 已部署并验收提交：`memory-gateway@298abb2`、`memory-mcp@178792e`；正确 Speaker 可查询，错误 Speaker 返回 `404`。
-- 本里程碑只解决“已知 operation ID 的安全查询”；operation 自动汇总、失败告警和持久化幂等仍按 P1.6 继续实施。
+- 本里程碑只解决“已知 operation ID 的安全查询”；operation 自动汇总和失败告警仍按 P1.6 继续实施，持久化幂等见下一里程碑。
+
+## 已完成里程碑：Retain 持久化幂等
+
+- Gateway 使用独立 SQLite 账本实现跨进程重启的 Retain 去重，不依赖内存缓存。
+- 调用方可传稳定 `idempotency_key`；同一 Bank / Speaker / Client 内相同键与相同请求直接重放先前结果，不再次调用 Hindsight。
+- 未传显式键时，对完全相同请求提供默认 15 分钟自动去重窗，覆盖聊天客户端超时后立即重复调用的常见情况。
+- 相同键配不同请求返回冲突；上游是否已受理不确定时标为 `uncertain` 并阻止盲目重投，优先避免重复数据。
+- 幂等账本位于服务器 `/var/lib/memory-gateway/idempotency.sqlite3`，文件权限 `600`，服务 `UMask=0077`。
+- 已部署并验收提交：`memory-gateway@df56924`、`memory-mcp@9aaef26`；生产 smoke 已证明相同请求只写入一次。
+- 后续状态页需要展示 `pending` / `uncertain` 项并告警，提供受控人工核查与恢复入口；不得自动清除后重投。
 
 ## 最近执行顺序
 
-1. 补齐异步 Retain 状态追踪、持久化幂等和状态页告警。
+1. 补齐异步 Retain operation 自动汇总、`pending` / `uncertain` 状态页告警和受控恢复。
 2. 安装日常增量任务，并用 2026-09-21 的真实数据完成首轮无人值守验收。
 3. 打通一张真实交易截图的附件保存、取回和 Obsidian 展示，确定多模态证据 contract。
 4. 在 Claim / State 落地前接入身份归属字段和表达校验，避免后续数据迁移。
