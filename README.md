@@ -5,6 +5,7 @@ V3 产品设计、停工线和质量门槛见 [DESIGN_V3.md](DESIGN_V3.md)；真
 真实样本证明自由 Claim 抽取会遗漏事实；当前主线改为 Evidence Unit 全覆盖，结果见 [GATE_B_RESULTS_2026-09-20.md](GATE_B_RESULTS_2026-09-20.md)。
 日报的总分结构、语言风格、事实/分析边界和人类/审计双视图规范见 [DAILY_VIEW_V2_SPEC.md](DAILY_VIEW_V2_SPEC.md)。
 长期对象的 State 生命周期见 [MEMORY_SUBJECT_STATE_SPEC.md](MEMORY_SUBJECT_STATE_SPEC.md)；Current Speaker、记录 Speaker、主体、参与者和共享范围的边界见 [IDENTITY_ATTRIBUTION_SPEC.md](IDENTITY_ATTRIBUTION_SPEC.md)；当前执行顺序见 [ROADMAP.md](ROADMAP.md)。
+需要把独立工程任务交给其他 Coding Agent 时，使用 [WORKBUDDY_HANDOFF.md](WORKBUDDY_HANDOFF.md) 中的任务边界和回传格式。
 
 Gate A/B 评审工具：
 
