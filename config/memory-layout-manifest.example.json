@@ -1,0 +1,12 @@
+{
+  "schema_version": "memory-layout-manifest-v1",
+  "layout_version": 1,
+  "entries": [
+    {
+      "subject_id": "project:personal-memory",
+      "path": "20-长期记忆/项目/AI 外置记忆.md",
+      "sha256": "由投影器写入的文件内容哈希",
+      "managed": true
+    }
+  ]
+}

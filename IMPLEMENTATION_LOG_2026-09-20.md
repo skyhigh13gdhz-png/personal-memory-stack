@@ -160,3 +160,14 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 - 项目/系统的高置信状态可标 `auto_eligible`；人物、健康、资产和策略的派生状态默认人工评审；
 - 基于 09-16、09-18、09-20 四条项目 Claim 生成第一份 Living Memory Object 私有预览：5 个状态项、4 条证据 Claim，其中 3 项可自动维护、2 项需评审；
 - 该预览 `as_of=2026-09-20`，不冒充当前实时状态，尚未进入正式长期记忆目录。
+
+## 12. 配置驱动的 Subject 与 Vault 布局
+
+- 将 `subject_type`、`collection`、`parent_subject_id` 分离，分别控制模板、导航目录和对象从属；
+- 交易账户与交易策略可同属“资产与策略”集合，但分别使用 account/strategy 模板；
+- component 可嵌套在父项目下，Memory Gateway/Hindsight 不再因类型自动与项目平级；
+- `subject-registry-v2` 为现有三个 Subject 增加 template、collection 和 parent 字段；
+- `memory-layout-v1` 把目录名与代码解耦，常规目录调整只改配置；
+- `memory_layout.py` 已实现 validate、plan、apply、rollback；
+- 迁移仅处理 manifest 管理且哈希未变化的文件，支持全量预检、目标冲突拒绝、路径逃逸保护和回滚日志；
+- 当前只在临时 Vault 自动化测试，没有迁移用户正式 Obsidian 文件。

@@ -22,6 +22,16 @@ person | pet | project | long_term_topic | health_track | habit | asset | strate
 
 `health_track`、`habit` 是长期主题的机器细分类型。目标、承诺、决策、未决问题、下一步通常是 Subject 内部字段，不默认成为一级对象；只有目标本身具有独立生命周期时，才考虑晋升为 `goal` Subject。
 
+Subject 的模板类型、导航集合和父子关系必须分开：
+
+```text
+subject_type       决定页面模板
+collection         决定 Obsidian 导航目录
+parent_subject_id  决定对象从属关系
+```
+
+交易账户与交易策略可以同属“资产与策略”集合，但分别使用 account/strategy 模板。Memory Gateway 可以使用 component 模板并从属于“AI 外置记忆”项目；组件信息不足时不单独生成页面。
+
 ## 3. 状态陈述类型
 
 | 类型 | 定义 | 最低证据要求 |

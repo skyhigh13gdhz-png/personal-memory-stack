@@ -1,20 +1,30 @@
 {
+  "schema_version": "subject-registry-v2",
   "subjects": [
     {
       "subject_id": "project:personal-memory",
       "subject_type": "project",
+      "template": "project-v1",
+      "collection": "projects",
+      "parent_subject_id": null,
       "canonical_name": "AI 外置记忆",
       "promotion_reason": "用户确认的持续项目，有明确生命周期和交付。"
     },
     {
       "subject_id": "health:sleep-energy",
       "subject_type": "health_track",
+      "template": "health-track-v1",
+      "collection": "health_habits",
+      "parent_subject_id": null,
       "canonical_name": "睡眠与精力",
       "promotion_reason": "用户确认的健康跟踪维度；只做陈述，不自动诊断或归因。"
     },
     {
       "subject_id": "strategy:crypto-trading-rhythm",
       "subject_type": "strategy",
+      "template": "strategy-v1",
+      "collection": "finance",
+      "parent_subject_id": null,
       "canonical_name": "加密交易节奏",
       "promotion_reason": "用户确认的高影响策略跟踪维度；状态更新必须人工确认。"
     }

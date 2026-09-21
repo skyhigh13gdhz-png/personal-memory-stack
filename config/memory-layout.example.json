@@ -1,0 +1,27 @@
+{
+  "schema_version": "memory-layout-v1",
+  "layout_version": 1,
+  "collections": {
+    "projects": "20-长期记忆/项目",
+    "health_habits": "20-长期记忆/健康与习惯",
+    "people": "20-长期记忆/人物与关系",
+    "pets": "20-长期记忆/宠物",
+    "finance": "20-长期记忆/资产与策略",
+    "systems": "20-长期记忆/系统与工具"
+  },
+  "routing": {
+    "project": "projects",
+    "long_term_topic": "health_habits",
+    "health_track": "health_habits",
+    "habit_track": "health_habits",
+    "person": "people",
+    "pet": "pets",
+    "account": "finance",
+    "asset": "finance",
+    "strategy": "finance",
+    "component": "systems",
+    "system": "systems",
+    "goal": "projects"
+  },
+  "nest_under_parent_types": ["component"]
+}
