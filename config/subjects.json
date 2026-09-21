@@ -1,0 +1,41 @@
+{
+  "schema_version": "subject-registry-v2",
+  "subjects": [
+    {
+      "subject_id": "project:personal-memory",
+      "subject_type": "project",
+      "template": "project-v1",
+      "collection": "projects",
+      "parent_subject_id": null,
+      "canonical_name": "AI 外置记忆",
+      "promotion_reason": "用户持续推进并明确要求长期维护的项目。"
+    },
+    {
+      "subject_id": "project:xiaohongshu-store",
+      "subject_type": "project",
+      "template": "project-v1",
+      "collection": "projects",
+      "parent_subject_id": null,
+      "canonical_name": "小红书店铺",
+      "promotion_reason": "日报中反复出现且具有独立工作流的持续项目。"
+    },
+    {
+      "subject_id": "health:sleep-energy",
+      "subject_type": "health_track",
+      "template": "health-track-v1",
+      "collection": "health_habits",
+      "parent_subject_id": null,
+      "canonical_name": "睡眠与精力",
+      "promotion_reason": "用户确认需要持续跟踪；状态推断必须人工确认。"
+    },
+    {
+      "subject_id": "strategy:crypto-trading-rhythm",
+      "subject_type": "strategy",
+      "template": "strategy-v1",
+      "collection": "finance",
+      "parent_subject_id": null,
+      "canonical_name": "加密交易节奏",
+      "promotion_reason": "用户确认需要长期观察交易节奏；不把账户与策略混为一类。"
+    }
+  ]
+}

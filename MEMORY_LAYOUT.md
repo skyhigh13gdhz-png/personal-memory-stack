@@ -7,6 +7,7 @@
 ```text
 subject_id         永久身份，移动文件时不变
 subject_type       模板类型
+template           具体模板版本，必须与 Subject 类型兼容
 collection         导航集合
 parent_subject_id  父对象
 path               当前投影路径，只存在于 manifest
@@ -16,8 +17,12 @@ path               当前投影路径，只存在于 manifest
 
 - `config/subjects.example.json`：Subject Registry 示例；
 - `config/memory-layout.example.json`：集合、类型路由和嵌套规则示例；
+- `config/subjects.json`：当前经过确认的最小 Subject Registry；
+- `config/memory-layout.json`：当前正式布局配置；
 - `config/memory-layout-manifest.example.json`：生成清单格式示例；
 - `memory-layout-manifest-v1`：系统生成文件当前路径和内容哈希，由投影器维护。
+
+Layout 中的 `templates` 是模板目录。Registry 引用不存在的模板，或把不兼容模板套到 Subject 类型上，校验会直接失败。
 
 ## 2. 调整分类
 
@@ -64,6 +69,13 @@ python3 scripts/memory_layout.py plan \
   --manifest 90-系统/生成清单/memory-layout-manifest.json \
   --vault /path/to/vault \
   --output /tmp/memory-layout-plan.json
+
+# 投影器写完页面后登记或刷新文件哈希
+python3 scripts/memory_layout.py register \
+  --manifest 90-系统/生成清单/memory-layout-manifest.json \
+  --vault /path/to/vault \
+  --subject-id project:personal-memory \
+  --path '20-长期记忆/项目/AI 外置记忆.md'
 
 # 人工检查计划后执行，并生成回滚日志
 python3 scripts/memory_layout.py apply \

@@ -193,9 +193,11 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
 
 长期记忆状态层由 `scripts/validate_subject_state.py` 校验 Direct Fact、Derived State、Hypothesis、证据跨度、状态覆盖和分级审核策略；`scripts/render_memory_subject.py` 先支持 project/system 类型的 Living Memory Object。新状态规范见 [MEMORY_SUBJECT_STATE_SPEC.md](MEMORY_SUBJECT_STATE_SPEC.md)。
 
-Vault 布局不再硬编码在模板里。`config/memory-layout.example.json` 分别配置模板类型路由、导航集合和父子嵌套；`scripts/memory_layout.py` 支持 `validate → plan → apply → rollback`。迁移只处理 manifest 标记为 managed 且哈希未变化的系统文件，目标冲突、外部编辑或越界路径都会拒绝执行。
+Vault 布局不再硬编码在模板里。`config/memory-layout.json` 分别配置模板目录、类型路由、导航集合和父子嵌套，`config/subjects.json` 保存当前确认的最小对象集合；`scripts/memory_layout.py` 支持 `validate → plan → apply → rollback`，并可在投影后登记 manifest。迁移只处理 manifest 标记为 managed 且哈希未变化的系统文件，目标冲突、外部编辑或越界路径都会拒绝执行。
 
 目录配置、迁移命令和“何时改配置/何时改代码”的边界见 [MEMORY_LAYOUT.md](MEMORY_LAYOUT.md)。
+
+`scripts/render_subject_registry.py` 将机器配置生成人可读的对象登记表，用于在正式投影或迁移之前检查分类、模板、从属关系和目标路径。
 
 ## 本地无副作用检查
 

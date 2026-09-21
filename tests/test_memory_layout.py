@@ -18,6 +18,12 @@ def layout():
         "schema_version": "memory-layout-v1", "layout_version": 2,
         "collections": {"projects": "20-长期记忆/项目", "finance": "20-长期记忆/资产与策略"},
         "routing": {"project": "projects", "component": "projects", "account": "finance", "strategy": "finance"},
+        "templates": {
+            "project-v1": {"subject_types": ["project"]},
+            "component-v1": {"subject_types": ["component"]},
+            "account-v1": {"subject_types": ["account"]},
+            "strategy-v1": {"subject_types": ["strategy"]},
+        },
         "nest_under_parent_types": ["component"],
     }
 
@@ -113,12 +119,49 @@ class MemoryLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "parent cycle"):
             LAYOUT.desired_paths(layout(), bad_registry)
 
+    def test_rejects_unknown_or_incompatible_template(self):
+        bad_registry = registry()
+        bad_registry["subjects"][0]["template"] = "missing-v1"
+        with self.assertRaisesRegex(ValueError, "unknown template"):
+            LAYOUT.desired_paths(layout(), bad_registry)
+
+        bad_registry = registry()
+        bad_registry["subjects"][0]["template"] = "strategy-v1"
+        with self.assertRaisesRegex(ValueError, "does not support"):
+            LAYOUT.desired_paths(layout(), bad_registry)
+
     def test_rejects_symlink_escape(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             vault = Path(directory)
             (vault / "escape").symlink_to(Path(outside), target_is_directory=True)
             with self.assertRaisesRegex(ValueError, "resolves outside"):
                 LAYOUT.vault_path(vault, "escape/file.md", "test.path")
+
+    def test_register_projection_adds_and_refreshes_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            projected = vault / "20-长期记忆" / "项目" / "AI 外置记忆.md"
+            projected.parent.mkdir(parents=True)
+            projected.write_text("# v1\n", encoding="utf-8")
+            manifest = {"schema_version": "memory-layout-manifest-v1", "layout_version": 1, "entries": []}
+            first = LAYOUT.register_projection(
+                manifest, vault, "project:memory", "20-长期记忆/项目/AI 外置记忆.md"
+            )
+            self.assertEqual(len(first["entries"]), 1)
+            self.assertEqual(first["entries"][0]["sha256"], hashlib.sha256(b"# v1\n").hexdigest())
+
+            projected.write_text("# v2\n", encoding="utf-8")
+            second = LAYOUT.register_projection(
+                first, vault, "project:memory", "20-长期记忆/项目/AI 外置记忆.md"
+            )
+            self.assertEqual(len(second["entries"]), 1)
+            self.assertEqual(second["entries"][0]["sha256"], hashlib.sha256(b"# v2\n").hexdigest())
+
+    def test_register_projection_refuses_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = {"schema_version": "memory-layout-manifest-v1", "entries": []}
+            with self.assertRaisesRegex(ValueError, "projected file missing"):
+                LAYOUT.register_projection(manifest, Path(directory), "project:memory", "missing.md")
 
 
 if __name__ == "__main__":

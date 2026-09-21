@@ -171,3 +171,11 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 - `memory_layout.py` 已实现 validate、plan、apply、rollback；
 - 迁移仅处理 manifest 管理且哈希未变化的文件，支持全量预检、目标冲突拒绝、路径逃逸保护和回滚日志；
 - 当前只在临时 Vault 自动化测试，没有迁移用户正式 Obsidian 文件。
+
+## 13. Subject Registry 治理闭环
+
+- 建立第一版正式 `config/subjects.json` 和 `config/memory-layout.json`：先纳入 AI 外置记忆、小红书店铺、睡眠与精力、加密交易节奏四个已具持续维护价值的对象；
+- 增加模板目录及类型兼容校验，防止把项目模板误套到健康、人物或策略对象；
+- `memory_layout.py register` 可在投影完成后刷新受管文件路径与哈希，补齐“生成 → 登记 → 安全迁移”的闭环；
+- 增加人类可读 Subject Registry 审阅页；人物、宠物、账户和内部组件证据不足时不自动创建空壳对象；
+- 正式 manifest 当前为空，意味着现有 Vault 文件均未被擅自接管，首次只读计划只会报告待投影对象。

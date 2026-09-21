@@ -42,10 +42,17 @@ def validate(layout: dict[str, Any], registry: dict[str, Any]) -> tuple[dict[str
         raise ValueError("registry schema_version must be subject-registry-v2")
     collections = layout.get("collections")
     routing = layout.get("routing")
+    templates = layout.get("templates")
     if not isinstance(collections, dict) or not collections:
         raise ValueError("collections must be a non-empty object")
     if not isinstance(routing, dict):
         raise ValueError("routing must be an object")
+    if not isinstance(templates, dict) or not templates:
+        raise ValueError("templates must be a non-empty object")
+    for template_id, template in templates.items():
+        allowed = template.get("subject_types") if isinstance(template, dict) else None
+        if not isinstance(allowed, list) or not allowed or not all(isinstance(item, str) and item for item in allowed):
+            raise ValueError(f"templates.{template_id}.subject_types must be a non-empty string array")
     collection_paths = {key: safe_relative(value, f"collections.{key}") for key, value in collections.items()}
     if len(set(collection_paths.values())) != len(collection_paths):
         raise ValueError("collection paths must be unique")
@@ -70,6 +77,11 @@ def validate(layout: dict[str, Any], registry: dict[str, Any]) -> tuple[dict[str
             raise ValueError(f"subject {subject_id} has no valid collection")
         if not subject.get("canonical_name") or not subject.get("template"):
             raise ValueError(f"subject {subject_id} requires canonical_name and template")
+        template_id = subject["template"]
+        if template_id not in templates:
+            raise ValueError(f"subject {subject_id} references unknown template {template_id}")
+        if subject_type not in templates[template_id]["subject_types"]:
+            raise ValueError(f"template {template_id} does not support subject type {subject_type}")
         subject_map[subject_id] = {**subject, "collection": collection}
     for subject_id, subject in subject_map.items():
         parent = subject.get("parent_subject_id")
@@ -228,6 +240,43 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def register_projection(
+    manifest: dict[str, Any], vault: Path, subject_id: str, relative_path: str, *, managed: bool = True
+) -> dict[str, Any]:
+    """Return a manifest with one projector-owned file recorded at its current hash."""
+    if manifest.get("schema_version") != "memory-layout-manifest-v1":
+        raise ValueError("manifest schema_version must be memory-layout-manifest-v1")
+    entries = manifest.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("manifest entries must be an array")
+    path = str(safe_relative(relative_path, "projection.path"))
+    projected = vault_path(vault, path, "projection.path")
+    if not projected.is_file():
+        raise ValueError(f"projected file missing: {path}")
+    if not isinstance(subject_id, str) or not subject_id.strip():
+        raise ValueError("subject_id is required")
+    replacement = {
+        "subject_id": subject_id,
+        "path": path,
+        "sha256": file_sha256(projected),
+        "managed": managed,
+    }
+    result = []
+    found = False
+    for entry in entries:
+        if entry.get("subject_id") == subject_id:
+            if found:
+                raise ValueError(f"duplicate manifest subject: {subject_id}")
+            result.append(replacement)
+            found = True
+        else:
+            result.append(entry)
+    if not found:
+        result.append(replacement)
+    result.sort(key=lambda item: item.get("subject_id", ""))
+    return {**manifest, "entries": result}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -235,6 +284,7 @@ def main() -> int:
     plan_cmd = sub.add_parser("plan")
     apply_cmd = sub.add_parser("apply")
     rollback_cmd = sub.add_parser("rollback")
+    register_cmd = sub.add_parser("register")
     for child in (validate_cmd, plan_cmd):
         child.add_argument("--layout", required=True, type=Path)
         child.add_argument("--subjects", required=True, type=Path)
@@ -246,6 +296,10 @@ def main() -> int:
     apply_cmd.add_argument("--journal", required=True, type=Path)
     rollback_cmd.add_argument("--journal", required=True, type=Path)
     rollback_cmd.add_argument("--vault", required=True, type=Path)
+    register_cmd.add_argument("--manifest", required=True, type=Path)
+    register_cmd.add_argument("--vault", required=True, type=Path)
+    register_cmd.add_argument("--subject-id", required=True)
+    register_cmd.add_argument("--path", required=True)
     args = parser.parse_args()
     if args.command == "validate":
         paths = desired_paths(load(args.layout), load(args.subjects))
@@ -259,9 +313,13 @@ def main() -> int:
         result = apply_plan(load(args.plan), args.vault)
         write_json(args.journal, result)
         print(f"[✓] moved {len(result['moves'])} managed files; journal: {args.journal}")
-    else:
+    elif args.command == "rollback":
         rollback(load(args.journal), args.vault)
         print("[✓] rolled back managed layout moves")
+    else:
+        result = register_projection(load(args.manifest), args.vault, args.subject_id, args.path)
+        write_json(args.manifest, result)
+        print(f"[✓] registered managed projection: {args.subject_id} -> {args.path}")
     return 0
 
 
