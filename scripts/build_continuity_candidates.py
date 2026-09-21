@@ -14,6 +14,60 @@ from typing import Any
 SCHEMA_VERSION = "continuity-candidates-v1"
 
 
+def merge_classified(packages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge multiple daily classification packages without losing or duplicating evidence."""
+    if not packages:
+        raise ValueError("at least one classified-evidence-v1 input is required")
+
+    canonical_subjects: dict[str, dict[str, Any]] = {}
+    units_by_id: dict[str, dict[str, Any]] = {}
+    source_hashes: list[str] = []
+    for package in packages:
+        if package.get("schema_version") != "classified-evidence-v1":
+            raise ValueError("input must be classified-evidence-v1")
+        package_subjects = package.get("subjects", [])
+        if len({item["subject_id"] for item in package_subjects}) != len(package_subjects):
+            raise ValueError("duplicate subject_id")
+        for subject in package_subjects:
+            subject_id = subject["subject_id"]
+            previous = canonical_subjects.get(subject_id)
+            identity_fields = ("subject_type", "canonical_name")
+            if previous is not None and any(previous.get(key) != subject.get(key) for key in identity_fields):
+                raise ValueError(f"conflicting subject identity: {subject_id}")
+            # Descriptive metadata may improve over time; the latest package is authoritative.
+            canonical_subjects[subject_id] = subject
+        for unit in package.get("units", []):
+            unit_id = unit.get("unit_id")
+            if not unit_id:
+                raise ValueError("evidence unit without unit_id")
+            previous = units_by_id.get(unit_id)
+            if previous is not None and previous != unit:
+                raise ValueError(f"conflicting duplicate evidence unit: {unit_id}")
+            units_by_id[unit_id] = unit
+        source_hashes.append(package.get("source_sha256") or hashlib.sha256(
+            json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest())
+
+    units = sorted(
+        units_by_id.values(),
+        key=lambda item: (
+            item.get("date", ""), item.get("document_id", ""),
+            item.get("start", 0), item.get("end", 0), item["unit_id"],
+        ),
+    )
+    return {
+        "schema_version": "classified-evidence-v1",
+        "classifier_version": "merged-classified-evidence-v1",
+        "source_sha256": hashlib.sha256("\n".join(sorted(source_hashes)).encode()).hexdigest(),
+        "subjects": sorted(canonical_subjects.values(), key=lambda item: item["subject_id"]),
+        "units": units,
+        "coverage": {
+            "source_packages": len(packages),
+            "units_preserved": len(units),
+        },
+    }
+
+
 def build(classified: dict[str, Any]) -> dict[str, Any]:
     if classified.get("schema_version") != "classified-evidence-v1":
         raise ValueError("input must be classified-evidence-v1")
@@ -73,10 +127,11 @@ def build(classified: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("classified", type=Path)
+    parser.add_argument("classified", type=Path, nargs="+")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    value = json.loads(args.classified.read_text(encoding="utf-8"))
+    packages = [json.loads(path.read_text(encoding="utf-8")) for path in args.classified]
+    value = packages[0] if len(packages) == 1 else merge_classified(packages)
     result = build(value)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_name(f".{args.output.name}.tmp")

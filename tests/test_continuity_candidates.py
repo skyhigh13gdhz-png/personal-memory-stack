@@ -38,6 +38,42 @@ def fixture():
 
 
 class ContinuityCandidatesTests(unittest.TestCase):
+    def test_merges_multiple_days_losslessly_and_in_date_order(self):
+        first = fixture()
+        second = fixture()
+        second["units"][0] = {
+            **second["units"][0], "unit_id": "u3", "date": "2026-01-02",
+            "document_id": "d2", "text": "完成第二轮测试。", "summary": "完成第二轮测试",
+        }
+        second["units"] = [second["units"][0], first["units"][0]]
+        merged = BUILDER.merge_classified([second, first])
+        self.assertEqual(merged["coverage"]["source_packages"], 2)
+        self.assertEqual(merged["coverage"]["units_preserved"], 3)
+        self.assertEqual([item["unit_id"] for item in merged["units"]], ["u1", "u2", "u3"])
+        bundle = BUILDER.build(merged)
+        self.assertEqual(bundle["metrics"]["candidate_links"], 2)
+
+    def test_rejects_conflicting_duplicate_unit(self):
+        first = fixture()
+        second = fixture()
+        second["units"][0]["text"] = "同一个 ID 却是不同内容"
+        with self.assertRaisesRegex(ValueError, "conflicting duplicate evidence unit"):
+            BUILDER.merge_classified([first, second])
+
+    def test_rejects_conflicting_subject_definition(self):
+        first = fixture()
+        second = fixture()
+        second["subjects"][0]["canonical_name"] = "不同名称"
+        with self.assertRaisesRegex(ValueError, "conflicting subject identity"):
+            BUILDER.merge_classified([first, second])
+
+    def test_allows_subject_description_to_evolve(self):
+        first = fixture()
+        second = fixture()
+        second["subjects"][0]["promotion_reason"] = "更清晰的后续说明"
+        merged = BUILDER.merge_classified([first, second])
+        self.assertEqual(merged["subjects"][0]["promotion_reason"], "更清晰的后续说明")
+
     def test_builds_only_confirmed_subject_links_without_state_updates(self):
         bundle = BUILDER.build(fixture())
         self.assertEqual(bundle["metrics"]["candidate_links"], 1)
