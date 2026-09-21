@@ -191,6 +191,8 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
 
 候选进入长期视图前还必须经过 `scripts/review_continuity_candidates.py`：每个 promoted Claim 需要逐字 evidence facet，并明确标为进展、里程碑、决策、承诺、状态或指标。`scripts/render_continuity_view_v1.py` 可把通过校验的新 Claim 与历史 `golden-v1` 合并成阅读预览，但不会自动填写“当前状态”。
 
+长期记忆状态层由 `scripts/validate_subject_state.py` 校验 Direct Fact、Derived State、Hypothesis、证据跨度、状态覆盖和分级审核策略；`scripts/render_memory_subject.py` 先支持 project/system 类型的 Living Memory Object。新状态规范见 [MEMORY_SUBJECT_STATE_SPEC.md](MEMORY_SUBJECT_STATE_SPEC.md)。
+
 ## 本地无副作用检查
 
 ```bash

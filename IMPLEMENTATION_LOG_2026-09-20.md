@@ -149,3 +149,14 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 - “AI 外置记忆”首份编辑预览已合并 09-16、09-18 的历史确认 Claim 与 09-20 的两个草稿 Claim；当前状态保持待确认；
 - 初版预览因“近期进展/状态记录”和时间线重复而被自检退回，现收敛为单一演进时间线，同一事实只展示一次；
 - 周报/月报未继续扩建，符合“日报 → 持续脉络 → 周/月报”的当前优先级。
+
+## 11. 长期记忆状态层纠偏
+
+- 明确“持续脉络”不是对象类型或 Obsidian 一级目录，而是每个 Memory Subject 的状态演进属性；
+- 产品命名调整为 `10-周期回顾` 与 `20-长期记忆`，目标、承诺、决策和未决问题默认作为 Subject 内部字段；
+- 新增 `subject-state-v1`，区分 `direct_fact`、`derived_state` 与 `hypothesis`；
+- Derived State 至少需要 2 条 Claim 且跨 2 个日期；Hypothesis 不能使用 high confidence，必须进入 `review_required`；
+- 新增状态生命周期和替换校验：同一 `state_key` 只能有一个 current，新状态只能 supersede 同 key 且已关闭的旧状态；
+- 项目/系统的高置信状态可标 `auto_eligible`；人物、健康、资产和策略的派生状态默认人工评审；
+- 基于 09-16、09-18、09-20 四条项目 Claim 生成第一份 Living Memory Object 私有预览：5 个状态项、4 条证据 Claim，其中 3 项可自动维护、2 项需评审；
+- 该预览 `as_of=2026-09-20`，不冒充当前实时状态，尚未进入正式长期记忆目录。
