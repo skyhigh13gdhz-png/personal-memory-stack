@@ -27,6 +27,25 @@ def classified_fixture():
 
 
 class DailyV2PipelineTests(unittest.TestCase):
+    def test_normalize_removes_empty_groups_and_marks_repeated_fact_facets(self):
+        editorial = {
+            "sections": [
+                {"section_id": "food", "groups": [
+                    {"group_kind": "facts", "items": []},
+                    {"group_kind": "facts", "items": [
+                        {"label": "午餐", "text": "A", "evidence_unit_ids": ["u1"]},
+                        {"label": "消费", "text": "B", "evidence_unit_ids": ["u1", "u2"]},
+                    ]},
+                ]},
+                {"section_id": "other", "groups": [{"group_kind": "facts", "items": []}]},
+            ]
+        }
+        result = PIPELINE.normalize_editorial_structure(editorial)
+        self.assertEqual(len(result["sections"]), 1)
+        items = result["sections"][0]["groups"][0]["items"]
+        self.assertTrue(items[0]["facet_split"])
+        self.assertTrue(items[1]["facet_split"])
+
     def test_uses_short_ids_and_only_daily_units(self):
         units, aliases = PIPELINE.alias_units(classified_fixture(), "2026-01-01")
         self.assertEqual(aliases, {"u01": "unit-long-hash-a"})
@@ -35,6 +54,16 @@ class DailyV2PipelineTests(unittest.TestCase):
         self.assertIn('"id":"u01"', content)
         self.assertNotIn("unit-long-hash-a", content)
         self.assertNotIn("长期资料", content)
+
+    def test_repair_prompt_contains_validation_error_and_draft(self):
+        draft = {"schema_version": "daily-view-v2", "date": "2026-01-01", "sections": []}
+        result = PIPELINE.repair_messages(
+            classified_fixture(), "2026-01-01", {"tone": "自然"}, draft,
+            ValueError("missing unit-long-hash-a"), {"u01": "unit-long-hash-a"}
+        )
+        self.assertEqual(result[-2]["role"], "assistant")
+        self.assertIn("missing u01", result[-1]["content"])
+        self.assertNotIn("unit-long-hash-a", result[-1]["content"])
 
     def test_expands_short_ids_before_validation(self):
         response = {

@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,28 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
     ]
 
 
+def repair_messages(
+    classified: dict[str, Any], day: str, style: dict[str, Any], draft: dict[str, Any], error: Exception,
+    aliases: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    base = messages(classified, day, style)
+    error_text = str(error)
+    if aliases:
+        for short_id, full_id in sorted(aliases.items(), key=lambda item: len(item[1]), reverse=True):
+            error_text = error_text.replace(full_id, short_id)
+    base.extend([
+        {"role": "assistant", "content": json.dumps(draft, ensure_ascii=False, separators=(",", ":"))},
+        {
+            "role": "user",
+            "content": (
+                "上一版未通过程序校验。只修正下列问题，仍返回完整 daily-view-v2 JSON，"
+                "不得删除已有合法事实，不得虚构：" + error_text
+            ),
+        },
+    ])
+    return base
+
+
 def expand_aliases(editorial: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
     expanded = json.loads(json.dumps(editorial, ensure_ascii=False))
     for section in expanded.get("sections", []):
@@ -99,6 +122,38 @@ def expand_aliases(editorial: dict[str, Any], aliases: dict[str, str]) -> dict[s
                     raise ValueError(f"unknown short unit ids: {unknown}")
                 item["evidence_unit_ids"] = [aliases[unit_id] for unit_id in refs]
     return expanded
+
+
+def normalize_editorial_structure(editorial: dict[str, Any]) -> dict[str, Any]:
+    """Repair schema-preserving presentation defects without changing facts."""
+    normalized = json.loads(json.dumps(editorial, ensure_ascii=False))
+    sections = []
+    fact_references: list[str] = []
+    for section in normalized.get("sections", []):
+        groups = []
+        for group in section.get("groups", []):
+            items = group.get("items")
+            if not isinstance(items, list) or not items:
+                continue
+            groups.append(group)
+            if group.get("group_kind") == "facts":
+                for item in items:
+                    if item.get("analysis_status") is None:
+                        fact_references.extend(item.get("evidence_unit_ids", []))
+        if groups:
+            section["groups"] = groups
+            sections.append(section)
+    normalized["sections"] = sections
+    repeated = {unit_id for unit_id, count in Counter(fact_references).items() if count > 1}
+    if repeated:
+        for section in sections:
+            for group in section["groups"]:
+                if group.get("group_kind") != "facts":
+                    continue
+                for item in group["items"]:
+                    if item.get("analysis_status") is None and repeated.intersection(item.get("evidence_unit_ids", [])):
+                        item["facet_split"] = True
+    return normalized
 
 
 def source_hash(classified: dict[str, Any], day: str, style: dict[str, Any], model: str) -> str:
@@ -159,7 +214,7 @@ def main() -> int:
     _, aliases = alias_units(classified, args.date)
     if args.command == "prepare":
         response = json.loads(args.response.read_text(encoding="utf-8"))
-        editorial = expand_aliases(response, aliases)
+        editorial = normalize_editorial_structure(expand_aliases(response, aliases))
         result = package(editorial, classified, style, run={
             "mode": "offline-response", "calls": 0, "prompt_version": PROMPT_VERSION
         })
@@ -182,16 +237,34 @@ def main() -> int:
                 print(f"[=] unchanged daily-v2 input; skipped LLM: {args.output}")
                 return 0
         response, metrics = CLAIMS.request_llm(base_url, api_key, model, messages(classified, args.date, style))
-        editorial = expand_aliases(response, aliases)
+        editorial = normalize_editorial_structure(expand_aliases(response, aliases))
         run = {
             "mode": "live", "calls": 1, "prompt_version": PROMPT_VERSION,
             "model": model, "input_hash": digest, **metrics,
         }
         try:
             result = package(editorial, classified, style, run=run)
-        except Exception as exc:
-            rejected = write_rejection(args.output, editorial, run, exc)
-            raise ValueError(f"daily v2 rejected and quarantined at {rejected}: {exc}") from exc
+        except Exception as first_error:
+            repair_response, repair_metrics = CLAIMS.request_llm(
+                base_url, api_key, model,
+                repair_messages(classified, args.date, style, response, first_error, aliases),
+            )
+            repaired = normalize_editorial_structure(expand_aliases(repair_response, aliases))
+            repaired_run = {
+                **run,
+                "calls": 2,
+                "repair_reason": str(first_error),
+                "repair_response_id": repair_metrics.get("response_id"),
+                "repair_latency_ms": repair_metrics.get("latency_ms"),
+                "repair_prompt_tokens": repair_metrics.get("prompt_tokens"),
+                "repair_completion_tokens": repair_metrics.get("completion_tokens"),
+                "repair_total_tokens": repair_metrics.get("total_tokens"),
+            }
+            try:
+                result = package(repaired, classified, style, run=repaired_run)
+            except Exception as exc:
+                rejected = write_rejection(args.output, repaired, repaired_run, exc)
+                raise ValueError(f"daily v2 rejected after one repair and quarantined at {rejected}: {exc}") from exc
     CLAIMS.write_json_atomic(args.output, result)
     print(f"[✓] wrote validated daily-v2 editorial package: {args.output}")
     return 0
