@@ -100,34 +100,43 @@ bash scripts/install_macos_obsidian_sync.sh
 
 ## 本机无人值守增量运行
 
-`scripts/local_incremental_runner.py` 把本机三个既有阶段串成一轮：同步原始投影 → 只补昨天及更早缺失的 Daily V2 → 刷新运行状态页。它只负责调度、运行锁、重试和日志，不复制各阶段的实现。Vault 在本机，因此调度器也装在本机，而不是远端 Ubuntu。
+`scripts/local_incremental_runner.py` 把本机三个既有阶段串成一轮：同步原始投影 → 补缺失的 Daily V2 → 刷新运行状态页。它只负责调度、运行锁、重试、超时和日志，不复制各阶段的实现。Vault 在本机，因此调度器也装在本机，而不是远端 Ubuntu。
 
 ```bash
-# 只预览本轮将要执行什么，不读真实 Vault、不调用 LLM
+# dry-run：只读扫描目录名生成计划，不写盘、不调用子命令、不读取正文、不调用外部 API
 python3 scripts/local_incremental_runner.py run --dry-run
 
 python3 scripts/local_incremental_runner.py run \
   --raw-dir "$VAULT/AI/AI外置记忆/00-系统生成/原始记录/liangzai" \
   --daily-dir "$VAULT/AI/AI外置记忆/01-日报" \
-  --status-output "$VAULT/AI/AI外置记忆/00-系统生成/运行状态.md"
+  --status-output "$VAULT/AI/AI外置记忆/90-系统/运行状态/外置记忆运行状态.md"
 ```
 
 编排规则：
 
-- 时区固定 `Asia/Shanghai`；当天只同步原始记录，日报窗口是「昨天」及更早的缺失日期，不反复重写当天日报；
-- 窗口内没有缺失日报时直接跳过生成阶段，不调用 LLM；
+- 时区固定 `Asia/Shanghai`；当天只同步原始记录，当天不生成日报；
+- **先同步、再排计划**：本轮同步刚拉到的原始记录，同一轮就能进入日报计划，不必等下一次调度；
+- 所有早于今天、有原始记录但没有日报的日期都进入待补队列，**昨天优先**，其余从新到旧排队；每轮只生成
+  `PERSONAL_MEMORY_MAX_DAILY_DAYS_PER_RUN` 天（默认 3），剩下的留在「仍待处理」，下一轮继续，不会永久漏补；
+- 没有缺失日报时直接跳过生成阶段，不调用 LLM；
 - 运行锁防止两轮重叠，第二个实例记录 `skipped` 后直接退出，不重复写入；
+- 每个阶段有 `PERSONAL_MEMORY_STAGE_TIMEOUT` 秒超时（默认 1800），超时按失败计入重试，避免 SSH 或 LLM 挂起时长期占锁；
 - 每个阶段最多重试 `PERSONAL_MEMORY_MAX_ATTEMPTS` 次，耗尽后保留结构化日志并返回非零状态；日报失败不覆盖已有正式文件；
 - 原始记录同步失败时跳过日报生成，避免基于陈旧数据写入；
-- 结构化日志默认写入 `~/Library/Logs/personal-memory-incremental/runner.jsonl`，本轮结果写入 `last-run.json`。
+- 结构化日志默认写入 `~/Library/Logs/personal-memory-incremental/runner.jsonl`，本轮结果写入 `last-run.json`，其中
+  `last_success_at` 只在成功时更新，不会被失败轮次抹掉；
+- 环境变量优先级：命令行参数 > env 文件 > 进程环境 > 内置默认值。env 文件同时配置运行器自身和子脚本，两者看到的是同一个 Vault。
 
-`--dry-run` 示例输出：
+`--dry-run` 示例输出（只读 home 下实测通过、零写入）：
 
 ```text
-[→] 增量运行 2026-05-10｜原始记录 2 天｜日报 1 天｜窗口 2026-05-03~2026-05-09
+[=] dry-run：只读扫描目录名，不写盘、不调用子命令
+[→] 计划 2026-05-10｜原始记录 2 天｜日报 0 天｜待补 2 天｜本轮生成 1 天｜仍待处理 1 天
+[→] 本轮生成：2026-05-09
+[=] 仍待处理：2026-05-07
 [dry-run] 将执行 sync-raw: bash '.../scripts/sync_obsidian_vault.sh'
 [dry-run] 将执行 daily-v2: python3 '.../scripts/sync_daily_v2.py' --raw-dir ... --output-dir ... --date-from 2026-05-09 --date-to 2026-05-09
-[dry-run] 将执行 status-page: python3 '.../scripts/render_generation_status.py' --raw-dir ... --daily-dir ... --output .../运行状态.md
+[dry-run] 将执行 status-page: python3 '.../scripts/render_generation_status.py' --raw-dir ... --daily-dir ... --output .../外置记忆运行状态.md
 [summary] sync-raw=dry-run | daily-v2=dry-run | status-page=dry-run
 ```
 
@@ -154,8 +163,6 @@ bash scripts/install_local_incremental_runner.sh uninstall         # 回滚：bo
 `scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入；过长日记可按已有章节拆成 `YYYY-MM-DD--slug.md`，仍归入同一天。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。
 
 当前由 Codex 协助维护和导入的个人记录统一使用稳定身份 `speaker=liangzai`；导入器也以此为默认值，不根据正文内容猜测身份。
-
-本机无人值守增量运行器（调度、运行锁、重试和状态页刷新）见「本机无人值守增量运行」章节，它复用上述同步与日报脚本，不复制其实现。
 
 ```bash
 python3 scripts/import_markdown_history.py \

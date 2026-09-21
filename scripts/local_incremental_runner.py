@@ -2,8 +2,9 @@
 """Unattended local incremental runner for the Obsidian memory projection.
 
 Runs the already existing pipeline stages in order and adds only the
-scheduling concerns: raw projection sync, gap detection, bounded retries,
-an overlap lock, structured logging and a non-zero failure status.
+scheduling concerns: raw projection sync, gap detection, a bounded backlog
+queue, bounded retries, an overlap lock, stage timeouts, structured logging
+and a non-zero failure status.
 
 It never reimplements what `sync_obsidian_vault.sh`, `sync_daily_v2.py` and
 `render_generation_status.py` already do -- it calls them.
@@ -32,14 +33,15 @@ except ImportError:  # pragma: no cover
     ZoneInfo = None  # type: ignore[assignment]
 
 
-SCHEMA_VERSION = "local-incremental-runner-v1"
+SCHEMA_VERSION = "local-incremental-runner-v2"
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_VAULT_DIR = "/Users/weizhenliang/obsidian空间"
 DEFAULT_RAW_REL = "AI/AI外置记忆/00-系统生成/原始记录/liangzai"
 DEFAULT_DAILY_REL = "AI/AI外置记忆/01-日报"
-DEFAULT_STATUS_REL = "AI/AI外置记忆/00-系统生成/运行状态.md"
+DEFAULT_STATUS_REL = "AI/AI外置记忆/90-系统/运行状态/外置记忆运行状态.md"
 RUNNER_LABEL = "personal-memory-incremental"
 DATE_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+SECRET_KEY_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "API_KEY", "AUTH")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 EXIT_OK = 0
@@ -63,9 +65,10 @@ class RunnerConfig:
     work_dir: Path | None = None
     timezone: str = DEFAULT_TIMEZONE
     today: date | None = None
-    backfill_days: int = 7
+    max_daily_days_per_run: int = 3
     max_attempts: int = 3
     retry_delay: float = 5.0
+    stage_timeout: float = 1800.0
     dry_run: bool = False
     log_file: Path | None = None
     state_dir: Path | None = None
@@ -131,6 +134,16 @@ def load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def secret_values(values: dict[str, str]) -> list[str]:
+    """Values whose key looks like a credential, so logs can mask them."""
+    found = []
+    for key, value in values.items():
+        upper = key.upper()
+        if any(marker in upper for marker in SECRET_KEY_MARKERS) and value:
+            found.append(value)
+    return found
+
+
 def env_file_permission_warning(path: Path) -> str | None:
     try:
         mode = path.stat().st_mode
@@ -161,32 +174,30 @@ def dated_days(directory: Path) -> set[str]:
     return days
 
 
-def plan_window(today: date, backfill_days: int) -> tuple[date, date]:
-    """Backfill window: yesterday at the newest, N days back at the oldest.
+def plan_run(
+    raw_dir: Path, daily_dir: Path, today: date, max_days_per_run: int
+) -> dict[str, Any]:
+    """Build the backlog plan.
 
-    Today is deliberately excluded: its raw records are still arriving, so a
-    report written now would be rewritten later.
+    Every day earlier than today that has raw records but no Daily V2 is a
+    candidate: a runner that was down for a week must not lose those gaps
+    forever. Only `max_days_per_run` of them are generated per round,
+    newest first, so a single round stays bounded.
     """
-    newest = today - timedelta(days=1)
-    oldest = today - timedelta(days=max(backfill_days, 1))
-    return oldest, newest
-
-
-def plan_run(raw_dir: Path, daily_dir: Path, today: date, backfill_days: int) -> dict[str, Any]:
     raw = dated_days(raw_dir)
     daily = dated_days(daily_dir)
-    oldest, newest = plan_window(today, backfill_days)
-    missing = sorted(
-        day for day in raw - daily
-        if oldest <= date.fromisoformat(day) <= newest
-    )
+    backlog = sorted(day for day in raw - daily if date.fromisoformat(day) < today)
+    newest_first = sorted(backlog, reverse=True)[:max(max_days_per_run, 1)]
+    selected = sorted(newest_first)
+    pending = sorted(set(backlog) - set(selected))
     return {
+        "today": today.isoformat(),
         "raw_days": len(raw),
         "daily_days": len(daily),
-        "window_start": oldest.isoformat(),
-        "window_end": newest.isoformat(),
-        "missing": missing,
-        "today": today.isoformat(),
+        "missing": backlog,
+        "selected": selected,
+        "pending": pending,
+        "max_days_per_run": max(max_days_per_run, 1),
     }
 
 
@@ -268,9 +279,22 @@ class Runner:
         self.sleep = sleep
         self.log_file = config.log_file or default_log_file()
         self.records: list[dict[str, Any]] = []
+        self.secrets: list[str] = []
+        if config.env_file is not None and config.env_file.exists():
+            self.secrets = secret_values(load_env_file(config.env_file))
 
     # -- helpers ---------------------------------------------------------
+    def redact(self, text: str) -> str:
+        for value in self.secrets:
+            if len(value) >= 4:
+                text = text.replace(value, "***")
+        return text
+
     def log(self, stage: str, outcome: str, **detail: Any) -> None:
+        safe_detail = {
+            key: self.redact(value) if isinstance(value, str) else value
+            for key, value in detail.items()
+        }
         record = {
             "schema": SCHEMA_VERSION,
             "ts": datetime.now().astimezone().isoformat(),
@@ -278,8 +302,11 @@ class Runner:
             "stage": stage,
             "outcome": outcome,
         }
-        record.update(detail)
+        record.update(safe_detail)
         self.records.append(record)
+        if self.config.dry_run:
+            # Dry-run must not touch the disk: keep records in memory only.
+            return
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         with self.log_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -302,8 +329,16 @@ class Runner:
             self.emit(f"[→] {name}（第 {attempt}/{self.config.max_attempts} 次）")
             try:
                 completed = subprocess.run(
-                    command, env=env, capture_output=True, text=True, check=False
+                    command, env=env, capture_output=True, text=True,
+                    check=False, timeout=self.config.stage_timeout,
                 )
+            except subprocess.TimeoutExpired:
+                last_detail = f"timeout after {self.config.stage_timeout}s"
+                self.emit(f"[!] {name} 超时：{last_detail}")
+                self.log(name, "timeout", attempt=attempt, detail=last_detail)
+                if attempt < self.config.max_attempts:
+                    self.sleep(self.config.retry_delay)
+                continue
             except OSError as exc:
                 completed = None
                 last_detail = f"{type(exc).__name__}: {exc}"
@@ -314,9 +349,9 @@ class Runner:
                 self.emit(f"[✓] {name} 完成")
                 return StageResult(name, "ok", attempt)
             if completed is not None:
-                last_detail = (completed.stderr or completed.stdout or "").strip().splitlines()
-                last_detail = last_detail[-1] if last_detail else f"exit={completed.returncode}"
-                self.emit(f"[!] {name} 失败：{last_detail}", )
+                tail = (completed.stderr or completed.stdout or "").strip().splitlines()
+                last_detail = tail[-1] if tail else f"exit={completed.returncode}"
+                self.emit(f"[!] {name} 失败：{self.redact(last_detail)}")
             self.log(name, "retry", attempt=attempt, detail=last_detail)
             if attempt < self.config.max_attempts:
                 self.sleep(self.config.retry_delay)
@@ -324,67 +359,127 @@ class Runner:
         self.emit(f"[✗] {name} 重试 {self.config.max_attempts} 次后仍失败")
         return StageResult(name, "failed", self.config.max_attempts, str(last_detail))
 
+    def emit_plan(self, plan: dict[str, Any]) -> None:
+        self.emit(
+            f"[→] 计划 {plan['today']}｜原始记录 {plan['raw_days']} 天｜"
+            f"日报 {plan['daily_days']} 天｜待补 {len(plan['missing'])} 天｜"
+            f"本轮生成 {len(plan['selected'])} 天｜仍待处理 {len(plan['pending'])} 天"
+        )
+        if plan["selected"]:
+            self.emit(f"[→] 本轮生成：{', '.join(plan['selected'])}")
+        if plan["pending"]:
+            self.emit(f"[=] 仍待处理：{', '.join(plan['pending'])}")
+
+    def make_plan(self, today: date) -> dict[str, Any]:
+        return plan_run(
+            self.config.raw_dir, self.config.daily_dir, today,
+            self.config.max_daily_days_per_run,
+        )
+
+    def daily_command_for(self, plan: dict[str, Any]) -> list[str]:
+        return self.config.daily_command or build_daily_command(
+            self.config.raw_dir, self.config.daily_dir, self.config.work_dir,
+            plan["selected"][0], plan["selected"][-1],
+        )
+
+    def status_command_for(self) -> list[str]:
+        return self.config.status_command or build_status_command(
+            self.config.raw_dir, self.config.daily_dir, self.config.work_dir,
+            self.config.status_output,
+        )
+
     # -- main ------------------------------------------------------------
     def run(self) -> int:
         config = self.config
         today = config.resolved_today()
-        plan = plan_run(config.raw_dir, config.daily_dir, today, config.backfill_days)
-        self.emit(
-            f"[→] 增量运行 {today.isoformat()}｜原始记录 {plan['raw_days']} 天｜"
-            f"日报 {plan['daily_days']} 天｜窗口 {plan['window_start']}~{plan['window_end']}"
-        )
-        self.log("plan", "ok", **plan)
-
         results: list[StageResult] = []
+        if config.dry_run:
+            # No lock and no writes: only directory names are read to plan.
+            self.emit(f"[=] dry-run：只读扫描目录名，不写盘、不调用子命令")
+            plan = self.make_plan(today)
+            self.emit_plan(plan)
+            self.log("plan", "ok", **plan)
+            results.append(self.run_stage(
+                "sync-raw", config.sync_command or build_sync_command()
+            ))
+            if plan["selected"]:
+                results.append(self.run_stage("daily-v2", self.daily_command_for(plan)))
+            else:
+                results.append(StageResult("daily-v2", "skipped", detail="no missing dates"))
+                self.emit("[=] 没有缺失日报，跳过生成（不调用 LLM）")
+                self.log("daily-v2", "skipped", detail="no missing dates")
+            results.append(self.run_stage("status-page", self.status_command_for()))
+            self.emit("[summary] " + " | ".join(
+                f"{item.name}={item.outcome}" for item in results
+            ))
+            return self.finish(plan, results, "dry-run", EXIT_OK)
+
         try:
             with acquire_lock(config.lock_path()):
                 self.log("lock", "acquired")
+                self.emit(f"[→] 增量运行 {today.isoformat()}（时区 {config.timezone}）")
                 results.append(self.run_stage(
                     "sync-raw", config.sync_command or build_sync_command()
                 ))
-                if results[-1].outcome == "failed":
+                sync_failed = results[-1].outcome == "failed"
+                # Re-plan after sync so this round sees records that just arrived.
+                plan = self.make_plan(today)
+                self.emit_plan(plan)
+                self.log("plan", "ok", **plan)
+                if sync_failed:
+                    # Never write reports from a stale or partial projection.
                     results.append(StageResult(
                         "daily-v2", "skipped", detail="原始记录同步失败，跳过日报生成"
                     ))
                     self.emit("[=] 原始记录同步失败，跳过日报生成以避免基于陈旧数据写入")
                     self.log("daily-v2", "skipped", detail="sync failed")
-                elif plan["missing"]:
-                    start, end = plan["missing"][0], plan["missing"][-1]
-                    results.append(self.run_stage(
-                        "daily-v2",
-                        config.daily_command or build_daily_command(
-                            config.raw_dir, config.daily_dir, config.work_dir, start, end
-                        ),
-                    ))
+                elif plan["selected"]:
+                    results.append(self.run_stage("daily-v2", self.daily_command_for(plan)))
                 else:
-                    # No gaps inside the window: never touch the LLM path.
-                    results.append(StageResult("daily-v2", "skipped", detail="no missing dates"))
-                    self.emit("[=] 窗口内无缺失日报，跳过生成（不调用 LLM）")
+                    results.append(StageResult(
+                        "daily-v2", "skipped", detail="no missing dates"
+                    ))
+                    self.emit("[=] 没有缺失日报，跳过生成（不调用 LLM）")
                     self.log("daily-v2", "skipped", detail="no missing dates")
-                results.append(self.run_stage(
-                    "status-page",
-                    config.status_command or build_status_command(
-                        config.raw_dir, config.daily_dir, config.work_dir, config.status_output
-                    ),
-                ))
+                results.append(self.run_stage("status-page", self.status_command_for()))
         except LockUnavailable as exc:
             self.emit(f"[=] 已有运行实例持有锁，本轮跳过：{exc}")
             self.log("lock", "skipped", detail=str(exc))
-            return self.finish(plan, [], "skipped", EXIT_OK)
+            return self.finish(
+                {"today": today.isoformat(), "missing": [], "selected": [], "pending": []},
+                [], "skipped", EXIT_OK,
+            )
 
         failed = [item for item in results if item.outcome == "failed"]
-        outcome = "failed" if failed else ("dry-run" if config.dry_run else "ok")
-        self.emit(
-            "[summary] " + " | ".join(f"{item.name}={item.outcome}" for item in results)
-        )
+        outcome = "failed" if failed else "ok"
+        self.emit("[summary] " + " | ".join(
+            f"{item.name}={item.outcome}" for item in results
+        ))
         return self.finish(plan, results, outcome, EXIT_FAILED if failed else EXIT_OK)
 
     def finish(
         self, plan: dict[str, Any], results: list[StageResult], outcome: str, code: int
     ) -> int:
+        if self.config.dry_run:
+            self.log("run", outcome)
+            return code
+        state_dir = self.config.state_dir or default_state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        last_run_path = state_dir / "last-run.json"
+        last_success_at = None
+        if last_run_path.exists():
+            try:
+                previous = json.loads(last_run_path.read_text(encoding="utf-8"))
+                last_success_at = previous.get("last_success_at")
+            except (OSError, json.JSONDecodeError):
+                last_success_at = None
+        finished_at = datetime.now().astimezone().isoformat()
+        if outcome == "ok":
+            last_success_at = finished_at
         payload = {
             "schema": SCHEMA_VERSION,
-            "finished_at": datetime.now().astimezone().isoformat(),
+            "finished_at": finished_at,
+            "last_success_at": last_success_at,
             "outcome": outcome,
             "plan": plan,
             "stages": [
@@ -393,9 +488,7 @@ class Runner:
                 for item in results
             ],
         }
-        state_dir = self.config.state_dir or default_state_dir()
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "last-run.json").write_text(
+        last_run_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         self.log("run", outcome)
@@ -414,11 +507,14 @@ def render_status(config: RunnerConfig) -> str:
         lines.append("- 尚无运行记录。")
     else:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
+        plan = payload.get("plan", {})
         lines.extend([
             f"- 上次运行：{payload.get('finished_at', '未知')}",
+            f"- 上次成功：{payload.get('last_success_at') or '尚无'}",
             f"- 结果：{payload.get('outcome', '未知')}",
-            f"- 原始记录天数：{payload.get('plan', {}).get('raw_days', '未知')}",
-            f"- 缺失日报：{', '.join(payload.get('plan', {}).get('missing', [])) or '无'}",
+            f"- 原始记录天数：{plan.get('raw_days', '未知')}",
+            f"- 本轮生成：{', '.join(plan.get('selected', [])) or '无'}",
+            f"- 仍待处理：{', '.join(plan.get('pending', [])) or '无'}",
             "",
             "## 阶段",
             "",
@@ -446,20 +542,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-dir", type=Path, default=None)
     parser.add_argument("--status-output", type=Path, default=None)
     parser.add_argument("--work-dir", type=Path, default=None)
-    parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
-    parser.add_argument("--today", help="ISO date; overrides the clock, for deterministic runs")
-    parser.add_argument(
-        "--backfill-days", type=int,
-        default=int(os.environ.get("PERSONAL_MEMORY_BACKFILL_DAYS", "7")),
-    )
-    parser.add_argument(
-        "--max-attempts", type=int,
-        default=int(os.environ.get("PERSONAL_MEMORY_MAX_ATTEMPTS", "3")),
-    )
-    parser.add_argument(
-        "--retry-delay", type=float,
-        default=float(os.environ.get("PERSONAL_MEMORY_RETRY_DELAY", "5.0")),
-    )
+    parser.add_argument("--timezone", default=None,
+                        help=f"固定为 {DEFAULT_TIMEZONE}，除非显式覆盖")
+    parser.add_argument("--today", default=None,
+                        help="ISO date; overrides the clock, for deterministic runs")
+    parser.add_argument("--max-daily-days-per-run", type=int, default=None)
+    parser.add_argument("--max-attempts", type=int, default=None)
+    parser.add_argument("--retry-delay", type=float, default=None)
+    parser.add_argument("--stage-timeout", type=float, default=None)
     parser.add_argument("--env-file", type=Path, default=None)
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--log-file", type=Path, default=None)
@@ -470,18 +560,37 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _pick(cli_value, key, file_values, cast, default):
+    """CLI argument > env file > process environment > default."""
+    if cli_value is not None:
+        return cli_value
+    if file_values.get(key):
+        return cast(file_values[key])
+    if os.environ.get(key):
+        return cast(os.environ[key])
+    return default
+
+
 def config_from_args(args: argparse.Namespace) -> RunnerConfig:
-    vault = args.vault_dir or Path(
-        os.environ.get("PERSONAL_MEMORY_VAULT_DIR", DEFAULT_VAULT_DIR)
+    env_file = _pick(args.env_file, "PERSONAL_MEMORY_RUNNER_ENV_FILE", {}, Path, None)
+    file_values: dict[str, str] = {}
+    if env_file is not None and env_file.exists():
+        file_values = load_env_file(env_file)
+    vault = _pick(
+        args.vault_dir, "PERSONAL_MEMORY_VAULT_DIR", file_values, Path,
+        Path(DEFAULT_VAULT_DIR),
     )
-    raw_dir = args.raw_dir or Path(
-        os.environ.get("PERSONAL_MEMORY_RAW_DIR", str(vault / DEFAULT_RAW_REL))
+    raw_dir = _pick(
+        args.raw_dir, "PERSONAL_MEMORY_RAW_DIR", file_values, Path,
+        vault / DEFAULT_RAW_REL,
     )
-    daily_dir = args.daily_dir or Path(
-        os.environ.get("PERSONAL_MEMORY_DAILY_DIR", str(vault / DEFAULT_DAILY_REL))
+    daily_dir = _pick(
+        args.daily_dir, "PERSONAL_MEMORY_DAILY_DIR", file_values, Path,
+        vault / DEFAULT_DAILY_REL,
     )
-    status_output = args.status_output or Path(
-        os.environ.get("PERSONAL_MEMORY_STATUS_OUTPUT", str(vault / DEFAULT_STATUS_REL))
+    status_output = _pick(
+        args.status_output, "PERSONAL_MEMORY_STATUS_OUTPUT", file_values, Path,
+        vault / DEFAULT_STATUS_REL,
     )
     today = date.fromisoformat(args.today) if args.today else None
     return RunnerConfig(
@@ -489,15 +598,28 @@ def config_from_args(args: argparse.Namespace) -> RunnerConfig:
         daily_dir=daily_dir,
         status_output=status_output,
         work_dir=args.work_dir,
-        timezone=args.timezone,
+        timezone=_pick(args.timezone, "PERSONAL_MEMORY_TIMEZONE", file_values, str,
+                       DEFAULT_TIMEZONE),
         today=today,
-        backfill_days=args.backfill_days,
-        max_attempts=args.max_attempts,
-        retry_delay=args.retry_delay,
+        max_daily_days_per_run=_pick(
+            args.max_daily_days_per_run, "PERSONAL_MEMORY_MAX_DAILY_DAYS_PER_RUN",
+            file_values, int, 3,
+        ),
+        max_attempts=_pick(
+            args.max_attempts, "PERSONAL_MEMORY_MAX_ATTEMPTS", file_values, int, 3
+        ),
+        retry_delay=_pick(
+            args.retry_delay, "PERSONAL_MEMORY_RETRY_DELAY", file_values, float, 5.0
+        ),
+        stage_timeout=_pick(
+            args.stage_timeout, "PERSONAL_MEMORY_STAGE_TIMEOUT", file_values, float, 1800.0
+        ),
         dry_run=args.dry_run,
-        log_file=args.log_file,
-        state_dir=args.state_dir,
-        env_file=args.env_file,
+        log_file=_pick(args.log_file, "PERSONAL_MEMORY_RUNNER_LOG_FILE", file_values,
+                       Path, None),
+        state_dir=_pick(args.state_dir, "PERSONAL_MEMORY_RUNNER_STATE_DIR", file_values,
+                        Path, None),
+        env_file=env_file,
         sync_command=shlex.split(args.sync_command) if args.sync_command else None,
         daily_command=shlex.split(args.daily_command) if args.daily_command else None,
         status_command=shlex.split(args.status_command) if args.status_command else None,
