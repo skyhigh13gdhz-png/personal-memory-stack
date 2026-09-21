@@ -14,6 +14,8 @@
 
 ## WB-01 本机日常增量任务（优先外包）
 
+> 首次实现 `94d6f28` 已完成主线复核，返修要求见 `WORKBUDDY_REVIEW_WB01.md`。WB-01R 通过前不得安装或进入 WB-02。
+
 ### 仓库和基线
 
 - 仓库：`personal-memory-stack`
