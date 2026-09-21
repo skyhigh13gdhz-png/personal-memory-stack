@@ -1,0 +1,27 @@
+{
+  "schema_version": "external-processing-policy-v1",
+  "status": "active",
+  "authorized_on": "2026-09-21",
+  "speaker": "liangzai",
+  "provider": "configured-zhipu-api",
+  "data_scope": [
+    "personal_text_records",
+    "evidence_units",
+    "daily_style_configuration",
+    "continuity_candidates"
+  ],
+  "allowed_purposes": [
+    "evidence_classification",
+    "daily_v2_generation",
+    "continuity_relevance_refinement",
+    "claim_candidate_generation"
+  ],
+  "operation_scope": "ongoing_incremental_processing",
+  "requires_new_authorization_when": [
+    "provider_changes",
+    "speaker_changes",
+    "purpose_expands",
+    "attachments_or_new_sensitive_data_types_are_added"
+  ],
+  "secrets_in_policy": false
+}

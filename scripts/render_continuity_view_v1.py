@@ -45,6 +45,8 @@ def render(reviewed: dict[str, Any], historical: dict[str, Any] | None = None) -
         "",
     ]
     groups = (
+        ("背景与边界", {"context"}),
+        ("目标与需求", {"goal", "requirement"}),
         ("里程碑", {"milestone"}),
         ("决策与承诺", {"decision", "commitment"}),
         ("关键指标", {"metric"}),
@@ -69,12 +71,14 @@ def render(reviewed: dict[str, Any], historical: dict[str, Any] | None = None) -
         lines.append(f"- **{claim['valid_date']} · {role_label}：** {claim['summary']}")
         refs = ",".join(ref["document_id"] for ref in claim["evidence"])
         lines.append(f"  <!-- evidence {refs} -->")
-    lines.extend([
-        "",
-        "## 未决问题",
-        "",
-        "- 哪些进展足以改变“当前状态”，仍需人工确认。",
-    ])
+    lines.extend(["", "## 未决问题", ""])
+    problems = [claim for claim in claims if claim.get("role") == "problem"]
+    for claim in problems:
+        lines.append(f"- **{claim['valid_date']}：** {claim['summary']}")
+        refs = ",".join(ref["document_id"] for ref in claim["evidence"])
+        lines.append(f"  <!-- evidence {refs} -->")
+    if not problems:
+        lines.append("- 哪些进展足以改变“当前状态”，仍需人工确认。")
     return "\n".join(lines).rstrip() + "\n"
 
 

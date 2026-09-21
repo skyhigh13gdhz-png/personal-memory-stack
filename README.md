@@ -193,6 +193,8 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
 
 候选进入长期视图前还必须经过 `scripts/review_continuity_candidates.py`：每个 promoted Claim 需要逐字 evidence facet，并明确标为进展、里程碑、决策、承诺、状态或指标。`scripts/render_continuity_view_v1.py` 可把通过校验的新 Claim 与历史 `golden-v1` 合并成阅读预览，但不会自动填写“当前状态”。
 
+外部 LLM 的持续数据处理边界记录在 `config/external-processing-policy.json`。已授权的同 speaker、同 Provider、同用途增量管道不逐日重复询问；更换 Provider、speaker、扩大用途或增加附件/新敏感数据类型时必须重新授权。
+
 长期记忆状态层由 `scripts/validate_subject_state.py` 校验 Direct Fact、Derived State、Hypothesis、证据跨度、状态覆盖和分级审核策略；`scripts/render_memory_subject.py` 先支持 project/system 类型的 Living Memory Object。新状态规范见 [MEMORY_SUBJECT_STATE_SPEC.md](MEMORY_SUBJECT_STATE_SPEC.md)。
 
 Vault 布局不再硬编码在模板里。`config/memory-layout.json` 分别配置模板目录、类型路由、导航集合和父子嵌套，`config/subjects.json` 保存当前确认的最小对象集合；`scripts/memory_layout.py` 支持 `validate → plan → apply → rollback`，并可在投影后登记 manifest。迁移只处理 manifest 标记为 managed 且哈希未变化的系统文件，目标冲突、外部编辑或越界路径都会拒绝执行。

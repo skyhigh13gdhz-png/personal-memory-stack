@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any
 
 
-ROLES = {"progress", "milestone", "decision", "commitment", "state", "metric", "noise"}
+ROLES = {
+    "context", "goal", "requirement", "problem", "progress", "milestone",
+    "decision", "commitment", "state", "metric", "noise",
+}
 KINDS = {"event", "state", "decision", "commitment", "metric"}
 
 
@@ -51,41 +54,49 @@ def review(bundle: dict[str, Any], decisions: dict[str, Any]) -> dict[str, Any]:
             continue
         if action != "promote":
             raise ValueError(f"decisions[{index}].action is invalid")
-        role = row.get("role")
-        kind = row.get("kind")
-        summary = row.get("summary")
-        quote = row.get("evidence_quote")
-        if role not in ROLES - {"noise"}:
-            raise ValueError(f"decisions[{index}].role is invalid")
-        if kind not in KINDS:
-            raise ValueError(f"decisions[{index}].kind is invalid")
-        if not isinstance(summary, str) or not summary.strip():
-            raise ValueError(f"decisions[{index}].summary is required")
         candidate = candidate_map[candidate_id]
-        if not isinstance(quote, str) or not quote.strip() or quote not in candidate["original_text"]:
-            raise ValueError(f"decisions[{index}].evidence_quote must be verbatim")
-        canonical = json.dumps({
-            "subject_id": subject_id, "candidate_id": candidate_id, "role": role,
-            "kind": kind, "summary": summary.strip(), "quote": quote,
-        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        claims.append({
-            "claim_id": "continuity-" + hashlib.sha256(canonical.encode()).hexdigest()[:16],
-            "candidate_id": candidate_id,
-            "role": role,
-            "kind": kind,
-            "summary": summary.strip(),
-            "valid_date": candidate["valid_date"],
-            "epistemic_status": "asserted",
-            "evidence": [{
-                "evidence_unit_id": candidate["evidence_unit_id"],
-                "document_id": candidate["evidence"]["document_id"],
-                "quote": quote,
-                "start": candidate["evidence"]["start"],
-                "end": candidate["evidence"]["end"],
-            }],
-            "review_status": "draft",
-            "state_update_allowed": False,
-        })
+        claim_rows = row.get("claims")
+        if claim_rows is None:  # Backward-compatible single-Claim decision.
+            claim_rows = [{key: row.get(key) for key in ("role", "kind", "summary", "evidence_quote")}]
+        if not isinstance(claim_rows, list) or not claim_rows:
+            raise ValueError(f"decisions[{index}].claims must be a non-empty array")
+        for claim_index, claim_row in enumerate(claim_rows):
+            if not isinstance(claim_row, dict):
+                raise ValueError(f"decisions[{index}].claims[{claim_index}] must be an object")
+            role = claim_row.get("role")
+            kind = claim_row.get("kind")
+            summary = claim_row.get("summary")
+            quote = claim_row.get("evidence_quote")
+            if role not in ROLES - {"noise"}:
+                raise ValueError(f"decisions[{index}].claims[{claim_index}].role is invalid")
+            if kind not in KINDS:
+                raise ValueError(f"decisions[{index}].claims[{claim_index}].kind is invalid")
+            if not isinstance(summary, str) or not summary.strip():
+                raise ValueError(f"decisions[{index}].claims[{claim_index}].summary is required")
+            if not isinstance(quote, str) or not quote.strip() or quote not in candidate["original_text"]:
+                raise ValueError(f"decisions[{index}].claims[{claim_index}].evidence_quote must be verbatim")
+            canonical = json.dumps({
+                "subject_id": subject_id, "candidate_id": candidate_id, "role": role,
+                "kind": kind, "summary": summary.strip(), "quote": quote,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            claims.append({
+                "claim_id": "continuity-" + hashlib.sha256(canonical.encode()).hexdigest()[:16],
+                "candidate_id": candidate_id,
+                "role": role,
+                "kind": kind,
+                "summary": summary.strip(),
+                "valid_date": candidate["valid_date"],
+                "epistemic_status": "asserted",
+                "evidence": [{
+                    "evidence_unit_id": candidate["evidence_unit_id"],
+                    "document_id": candidate["evidence"]["document_id"],
+                    "quote": quote,
+                    "start": candidate["evidence"]["start"],
+                    "end": candidate["evidence"]["end"],
+                }],
+                "review_status": "draft",
+                "state_update_allowed": False,
+            })
     unreviewed = sorted(set(candidate_map) - seen)
     return {
         "schema_version": "continuity-claims-v1",

@@ -53,6 +53,21 @@ class ContinuityReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be verbatim"):
             REVIEW.review(bundle(), decisions("接口已稳定"))
 
+    def test_splits_one_compound_candidate_into_multiple_claims(self):
+        value = decisions()
+        value["decisions"][0] = {
+            "candidate_id": "c1", "action": "promote", "claims": [{
+                "role": "progress", "kind": "event", "summary": "完成接口测试。",
+                "evidence_quote": "完成接口测试",
+            }, {
+                "role": "progress", "kind": "event", "summary": "吃了午饭。",
+                "evidence_quote": "吃了午饭",
+            }],
+        }
+        result = REVIEW.review(bundle(), value)
+        self.assertEqual(len(result["claims"]), 2)
+        self.assertEqual({item["evidence"][0]["quote"] for item in result["claims"]}, {"完成接口测试", "吃了午饭"})
+
     def test_view_keeps_current_state_unconfirmed(self):
         reviewed = REVIEW.review(bundle(), decisions())
         text = VIEW.render(reviewed)
