@@ -30,6 +30,7 @@ Profile 不能从最新一条事件临时推断，也不能被日报摘要覆盖
 ## 3. 数据与展示边界
 
 - `subject-profile-v1` 保存基本档案内容，并通过永久 `subject_id` 与 Registry 关联；
+- Profile 必须明确标记 `draft` 或 `confirmed`；草案页面可预览，但不能进入正式长期记忆目录；
 - Obsidian 人类视图只显示自然语言章节；机器身份放在隐藏注释或独立 Registry；
 - Profile 的必填字段不全时拒绝正式投影，不用空标题或占位符凑页面；
 - 高影响类型的派生状态仍需人工确认，Profile 合法不代表 State 可以自动改写。

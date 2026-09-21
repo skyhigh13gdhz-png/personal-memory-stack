@@ -27,7 +27,7 @@ class MemorySubjectPipelineTests(unittest.TestCase):
         registry = json.loads((ROOT / "config" / "subjects.json").read_text(encoding="utf-8"))
         subject = next(item for item in registry["subjects"] if item["subject_id"] == "project:personal-memory")
         profile = {
-            "schema_version": "subject-profile-v1", "subject_id": subject["subject_id"],
+            "schema_version": "subject-profile-v1", "review_status": "confirmed", "subject_id": subject["subject_id"],
             "content": {
                 "summary": "一套个人外置记忆系统。",
                 "purpose": "保存、检索并组织个人记录。",

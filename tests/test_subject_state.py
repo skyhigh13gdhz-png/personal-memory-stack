@@ -40,7 +40,7 @@ def state():
 
 def profile():
     return {
-        "schema_version": "subject-profile-v1", "subject_id": "project:memory",
+        "schema_version": "subject-profile-v1", "review_status": "confirmed", "subject_id": "project:memory",
         "content": {
             "summary": "一套个人外置记忆系统。",
             "purpose": "帮助保存、检索和整理个人记录。",
@@ -145,7 +145,7 @@ class SubjectStateTests(unittest.TestCase):
             for section in contract["profile_sections"]:
                 if section["required"]:
                     content[section["key"]] = "示例说明。" if section["kind"] == "paragraph" else ["示例条目。"]
-            profile_value = {"schema_version": "subject-profile-v1", "subject_id": "project:memory", "content": content}
+            profile_value = {"schema_version": "subject-profile-v1", "review_status": "confirmed", "subject_id": "project:memory", "content": content}
             text = RENDERER.render(profile_value, value, claims(), contract)
             self.assertIn(f"## {expected_heading}", text)
 

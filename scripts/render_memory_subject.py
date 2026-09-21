@@ -36,6 +36,8 @@ def render(
         f"# {subject['canonical_name']}", "", f"> 更新至 {state['as_of']}", "",
         "<!-- memory-subject " + json.dumps(metadata, ensure_ascii=False, separators=(",", ":")) + " -->", "",
     ]
+    if profile["review_status"] == "draft":
+        lines.extend(["> [!warning] 基本档案待确认", "> 以下基本档案是评审草案，确认前不会进入正式长期记忆。", ""])
     for section in template["profile_sections"]:
         value = profile["content"].get(section["key"])
         if not value:
