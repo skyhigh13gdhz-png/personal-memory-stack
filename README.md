@@ -189,6 +189,8 @@ python3 scripts/render_daily_v2_editorial.py local-evaluation/daily-v2-editorial
 
 持续脉络先走零 LLM 候选层：`scripts/build_continuity_candidates.py` 只汇集与已确认 Subject 明确关联的 Evidence Units，`scripts/render_continuity_candidate_review.py` 生成待勾选评审页。候选默认 `pending` 且禁止更新当前状态；完整设计见 [CONTINUITY_VIEW_V1_SPEC.md](CONTINUITY_VIEW_V1_SPEC.md)。
 
+候选进入长期视图前还必须经过 `scripts/review_continuity_candidates.py`：每个 promoted Claim 需要逐字 evidence facet，并明确标为进展、里程碑、决策、承诺、状态或指标。`scripts/render_continuity_view_v1.py` 可把通过校验的新 Claim 与历史 `golden-v1` 合并成阅读预览，但不会自动填写“当前状态”。
+
 ## 本地无副作用检查
 
 ```bash
