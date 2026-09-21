@@ -201,6 +201,8 @@ Vault 布局不再硬编码在模板里。`config/memory-layout.json` 分别配�
 
 所有面向 Obsidian 阅读的输出遵循 [HUMAN_VIEW_CONTRACT.md](HUMAN_VIEW_CONTRACT.md)：默认不显示机器 ID、哈希、模板版本和证据索引，审计信息进入隐藏注释或独立产物。
 
+长期对象由 Profile、State、Timeline 三层组成，类型化字段及更新边界见 [SUBJECT_PROFILE_SPEC.md](SUBJECT_PROFILE_SPEC.md)；当前推进顺序与完成状态见 [ROADMAP.md](ROADMAP.md)。
+
 ## 本地无副作用检查
 
 ```bash

@@ -19,7 +19,7 @@ FACETS = {
     "open_question", "next_action", "milestone",
 }
 LIFECYCLE = {"current", "superseded", "resolved", "reopened"}
-HIGH_IMPACT_SUBJECTS = {"person", "health_track", "asset", "strategy"}
+HIGH_IMPACT_SUBJECTS = {"person", "pet", "health_track", "habit_track", "account", "asset", "strategy"}
 
 
 def claim_map(historical: dict[str, Any] | None, reviewed: dict[str, Any]) -> dict[str, dict[str, Any]]:

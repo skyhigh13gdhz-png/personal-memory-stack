@@ -16,26 +16,17 @@ SPEC = importlib.util.spec_from_file_location("validate_subject_state", SCRIPT_D
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(VALIDATOR)
+PROFILE_SPEC = importlib.util.spec_from_file_location("validate_subject_profile", SCRIPT_DIR / "validate_subject_profile.py")
+PROFILE_VALIDATOR = importlib.util.module_from_spec(PROFILE_SPEC)
+assert PROFILE_SPEC.loader is not None
+PROFILE_SPEC.loader.exec_module(PROFILE_VALIDATOR)
 
-FACET_HEADINGS = {
-    "phase": "当前阶段",
-    "capability": "当前状态",
-    "focus": "当前推进",
-    "problem": "当前问题",
-    "decision": "已确定事项",
-    "goal": "长期目标",
-    "open_question": "未确认事项",
-    "next_action": "下一步",
-    "milestone": "关键里程碑",
-}
-PROJECT_ORDER = ("phase", "capability", "goal", "decision", "focus", "problem", "open_question", "next_action", "milestone")
-
-
-def render(state: dict[str, Any], claims: dict[str, dict[str, Any]]) -> str:
+def render(
+    profile: dict[str, Any], state: dict[str, Any], claims: dict[str, dict[str, Any]], template: dict[str, Any]
+) -> str:
     metrics = VALIDATOR.validate(state, claims)
     subject = state["subject"]
-    if subject["subject_type"] not in {"project", "system"}:
-        raise ValueError("V1 renderer currently supports project/system only")
+    PROFILE_VALIDATOR.validate(profile, subject, template)
     current = [item for item in state["state_items"] if item["lifecycle"] in {"current", "reopened"}]
     metadata = {
         "subject_id": subject["subject_id"], "subject_type": subject["subject_type"],
@@ -45,11 +36,21 @@ def render(state: dict[str, Any], claims: dict[str, dict[str, Any]]) -> str:
         f"# {subject['canonical_name']}", "", f"> 更新至 {state['as_of']}", "",
         "<!-- memory-subject " + json.dumps(metadata, ensure_ascii=False, separators=(",", ":")) + " -->", "",
     ]
-    for facet in PROJECT_ORDER:
+    for section in template["profile_sections"]:
+        value = profile["content"].get(section["key"])
+        if not value:
+            continue
+        lines.extend([f"## {section['title']}", ""])
+        if section["kind"] == "paragraph":
+            lines.extend([value, ""])
+        else:
+            lines.extend([*(f"- {item}" for item in value), ""])
+    for state_section in template["state_sections"]:
+        facet = state_section["facet"]
         items = [item for item in current if item["facet"] == facet]
         if not items:
             continue
-        lines.extend([f"## {FACET_HEADINGS[facet]}", ""])
+        lines.extend([f"## {state_section['title']}", ""])
         for item in items:
             marker = ""
             if item["state_type"] == "hypothesis":
@@ -83,14 +84,27 @@ def render(state: dict[str, Any], claims: dict[str, dict[str, Any]]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("state", type=Path)
+    parser.add_argument("--profile", required=True, type=Path)
+    parser.add_argument("--layout", required=True, type=Path)
+    parser.add_argument("--registry", required=True, type=Path)
     parser.add_argument("--reviewed", required=True, type=Path)
     parser.add_argument("--historical", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     state = json.loads(args.state.read_text(encoding="utf-8"))
+    profile = json.loads(args.profile.read_text(encoding="utf-8"))
+    layout = json.loads(args.layout.read_text(encoding="utf-8"))
+    registry = json.loads(args.registry.read_text(encoding="utf-8"))
+    subject_id = state["subject"]["subject_id"]
+    registry_subject = next((item for item in registry["subjects"] if item["subject_id"] == subject_id), None)
+    if registry_subject is None:
+        raise ValueError(f"subject missing from registry: {subject_id}")
+    template = layout["templates"].get(registry_subject["template"])
+    if template is None:
+        raise ValueError(f"template missing from layout: {registry_subject['template']}")
     reviewed = json.loads(args.reviewed.read_text(encoding="utf-8"))
     historical = json.loads(args.historical.read_text(encoding="utf-8")) if args.historical else None
-    text = render(state, VALIDATOR.claim_map(historical, reviewed))
+    text = render(profile, state, VALIDATOR.claim_map(historical, reviewed), template)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_name(f".{args.output.name}.tmp")
     temporary.write_text(text, encoding="utf-8")

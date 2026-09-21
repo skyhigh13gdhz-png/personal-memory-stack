@@ -19,10 +19,10 @@ def layout():
         "collections": {"projects": "20-长期记忆/项目", "finance": "20-长期记忆/资产与策略"},
         "routing": {"project": "projects", "component": "projects", "account": "finance", "strategy": "finance"},
         "templates": {
-            "project-v1": {"subject_types": ["project"]},
-            "component-v1": {"subject_types": ["component"]},
-            "account-v1": {"subject_types": ["account"]},
-            "strategy-v1": {"subject_types": ["strategy"]},
+            "project-v1": {"subject_types": ["project"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": True}], "state_sections": [{"facet": "phase", "title": "当前阶段"}]},
+            "component-v1": {"subject_types": ["component"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": True}], "state_sections": [{"facet": "capability", "title": "当前能力"}]},
+            "account-v1": {"subject_types": ["account"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": True}], "state_sections": [{"facet": "capability", "title": "当前状态"}]},
+            "strategy-v1": {"subject_types": ["strategy"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": True}], "state_sections": [{"facet": "phase", "title": "当前阶段"}]},
         },
         "nest_under_parent_types": ["component"],
     }
@@ -129,6 +129,12 @@ class MemoryLayoutTests(unittest.TestCase):
         bad_registry["subjects"][0]["template"] = "strategy-v1"
         with self.assertRaisesRegex(ValueError, "does not support"):
             LAYOUT.desired_paths(layout(), bad_registry)
+
+    def test_rejects_invalid_profile_section_contract(self):
+        bad_layout = layout()
+        bad_layout["templates"]["project-v1"]["profile_sections"][0]["kind"] = "table"
+        with self.assertRaisesRegex(ValueError, "kind is invalid"):
+            LAYOUT.desired_paths(bad_layout, registry())
 
     def test_rejects_symlink_escape(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:

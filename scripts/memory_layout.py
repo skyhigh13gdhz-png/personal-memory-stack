@@ -53,6 +53,35 @@ def validate(layout: dict[str, Any], registry: dict[str, Any]) -> tuple[dict[str
         allowed = template.get("subject_types") if isinstance(template, dict) else None
         if not isinstance(allowed, list) or not allowed or not all(isinstance(item, str) and item for item in allowed):
             raise ValueError(f"templates.{template_id}.subject_types must be a non-empty string array")
+        sections = template.get("profile_sections")
+        if not isinstance(sections, list) or not sections:
+            raise ValueError(f"templates.{template_id}.profile_sections must be a non-empty array")
+        section_keys = set()
+        for index, section in enumerate(sections):
+            if not isinstance(section, dict):
+                raise ValueError(f"templates.{template_id}.profile_sections[{index}] must be an object")
+            key = section.get("key")
+            if not isinstance(key, str) or not key or key in section_keys:
+                raise ValueError(f"templates.{template_id}.profile_sections keys must be unique")
+            section_keys.add(key)
+            if not isinstance(section.get("title"), str) or not section["title"]:
+                raise ValueError(f"templates.{template_id}.profile_sections[{index}].title is required")
+            if section.get("kind") not in {"paragraph", "list"}:
+                raise ValueError(f"templates.{template_id}.profile_sections[{index}].kind is invalid")
+            if not isinstance(section.get("required"), bool):
+                raise ValueError(f"templates.{template_id}.profile_sections[{index}].required must be boolean")
+        state_sections = template.get("state_sections")
+        if not isinstance(state_sections, list) or not state_sections:
+            raise ValueError(f"templates.{template_id}.state_sections must be a non-empty array")
+        state_facets = set()
+        for index, section in enumerate(state_sections):
+            if not isinstance(section, dict) or not isinstance(section.get("facet"), str):
+                raise ValueError(f"templates.{template_id}.state_sections[{index}].facet is required")
+            if section["facet"] in state_facets:
+                raise ValueError(f"templates.{template_id}.state_sections facets must be unique")
+            state_facets.add(section["facet"])
+            if not isinstance(section.get("title"), str) or not section["title"]:
+                raise ValueError(f"templates.{template_id}.state_sections[{index}].title is required")
     collection_paths = {key: safe_relative(value, f"collections.{key}") for key, value in collections.items()}
     if len(set(collection_paths.values())) != len(collection_paths):
         raise ValueError("collection paths must be unique")

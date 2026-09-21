@@ -24,14 +24,34 @@
     "goal": "projects"
   },
   "templates": {
-    "project-v1": {"subject_types": ["project"]},
-    "health-track-v1": {"subject_types": ["health_track", "long_term_topic"]},
-    "person-v1": {"subject_types": ["person"]},
-    "pet-v1": {"subject_types": ["pet"]},
-    "account-v1": {"subject_types": ["account", "asset"]},
-    "strategy-v1": {"subject_types": ["strategy"]},
-    "component-v1": {"subject_types": ["component", "system"]},
-    "goal-v1": {"subject_types": ["goal"]}
+    "project-v1": {
+      "subject_types": ["project"],
+      "profile_sections": [
+        {"key": "summary", "title": "这是什么", "kind": "paragraph", "required": true},
+        {"key": "purpose", "title": "用来做什么", "kind": "paragraph", "required": true},
+        {"key": "origin", "title": "为什么建立", "kind": "paragraph", "required": true},
+        {"key": "boundaries", "title": "范围与边界", "kind": "list", "required": true},
+        {"key": "objectives", "title": "目标", "kind": "list", "required": false},
+        {"key": "success_criteria", "title": "完成标准", "kind": "list", "required": false}
+      ],
+      "state_sections": [{"facet": "phase", "title": "当前阶段"}, {"facet": "capability", "title": "当前状态"}, {"facet": "focus", "title": "当前推进"}, {"facet": "problem", "title": "当前问题"}, {"facet": "open_question", "title": "待确认事项"}, {"facet": "next_action", "title": "下一步"}]
+    },
+    "health-track-v1": {
+      "subject_types": ["health_track", "long_term_topic"],
+      "profile_sections": [
+        {"key": "summary", "title": "跟踪什么", "kind": "paragraph", "required": true},
+        {"key": "purpose", "title": "为什么跟踪", "kind": "paragraph", "required": true},
+        {"key": "signals", "title": "关注信号", "kind": "list", "required": true},
+        {"key": "boundaries", "title": "解释边界", "kind": "list", "required": true}
+      ],
+      "state_sections": [{"facet": "capability", "title": "当前情况"}, {"facet": "focus", "title": "近期关注"}, {"facet": "problem", "title": "需要留意"}, {"facet": "open_question", "title": "待确认事项"}, {"facet": "next_action", "title": "后续观察"}]
+    },
+    "person-v1": {"subject_types": ["person"], "profile_sections": [{"key": "relationship", "title": "与我的关系", "kind": "paragraph", "required": true}, {"key": "context", "title": "基本情况", "kind": "paragraph", "required": true}, {"key": "boundaries", "title": "记录边界", "kind": "list", "required": true}], "state_sections": [{"facet": "capability", "title": "当前情况"}, {"facet": "focus", "title": "近期互动"}, {"facet": "problem", "title": "需要留意"}]},
+    "pet-v1": {"subject_types": ["pet"], "profile_sections": [{"key": "relationship", "title": "它是谁", "kind": "paragraph", "required": true}, {"key": "basic_info", "title": "基本信息", "kind": "list", "required": true}, {"key": "care_focus", "title": "照护重点", "kind": "list", "required": false}], "state_sections": [{"facet": "capability", "title": "当前情况"}, {"facet": "focus", "title": "近期记录"}, {"facet": "problem", "title": "健康与照护"}]},
+    "account-v1": {"subject_types": ["account", "asset"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": true}, {"key": "purpose", "title": "用途", "kind": "paragraph", "required": true}, {"key": "risk_boundaries", "title": "风险边界", "kind": "list", "required": true}], "state_sections": [{"facet": "capability", "title": "当前状态"}, {"facet": "problem", "title": "风险与问题"}]},
+    "strategy-v1": {"subject_types": ["strategy"], "profile_sections": [{"key": "summary", "title": "策略说明", "kind": "paragraph", "required": true}, {"key": "purpose", "title": "解决什么问题", "kind": "paragraph", "required": true}, {"key": "principles", "title": "核心原则", "kind": "list", "required": true}, {"key": "risk_boundaries", "title": "风险边界", "kind": "list", "required": true}], "state_sections": [{"facet": "phase", "title": "当前阶段"}, {"facet": "capability", "title": "执行状态"}, {"facet": "problem", "title": "风险与偏差"}]},
+    "component-v1": {"subject_types": ["component", "system"], "profile_sections": [{"key": "summary", "title": "这是什么", "kind": "paragraph", "required": true}, {"key": "responsibility", "title": "负责什么", "kind": "paragraph", "required": true}, {"key": "parent_context", "title": "所属关系", "kind": "paragraph", "required": true}, {"key": "boundaries", "title": "系统边界", "kind": "list", "required": true}], "state_sections": [{"facet": "capability", "title": "当前能力"}, {"facet": "problem", "title": "已知问题"}, {"facet": "next_action", "title": "下一步"}]},
+    "goal-v1": {"subject_types": ["goal"], "profile_sections": [{"key": "summary", "title": "目标", "kind": "paragraph", "required": true}, {"key": "motivation", "title": "为什么重要", "kind": "paragraph", "required": true}, {"key": "success_criteria", "title": "达成标准", "kind": "list", "required": true}], "state_sections": [{"facet": "phase", "title": "当前阶段"}, {"facet": "milestone", "title": "里程碑"}, {"facet": "next_action", "title": "下一步"}]}
   },
   "nest_under_parent_types": ["component"]
 }
