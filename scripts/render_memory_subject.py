@@ -38,6 +38,8 @@ def render(
     ]
     if profile["review_status"] == "draft":
         lines.extend(["> [!warning] 基本档案待确认", "> 以下基本档案是评审草案，确认前不会进入正式长期记忆。", ""])
+    elif profile["review_status"] == "trial":
+        lines.extend(["> [!info] 试运行版本", "> 当前结构已投入使用，基本档案和模板仍会根据实际体验持续优化。", ""])
     for section in template["profile_sections"]:
         value = profile["content"].get(section["key"])
         if not value:

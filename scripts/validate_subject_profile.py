@@ -14,8 +14,8 @@ def validate(profile: dict[str, Any], subject: dict[str, Any], template: dict[st
     errors: list[str] = []
     if profile.get("schema_version") != "subject-profile-v1":
         errors.append("schema_version must be subject-profile-v1")
-    if profile.get("review_status") not in {"draft", "confirmed"}:
-        errors.append("review_status must be draft or confirmed")
+    if profile.get("review_status") not in {"draft", "trial", "confirmed"}:
+        errors.append("review_status must be draft, trial, or confirmed")
     if profile.get("subject_id") != subject.get("subject_id"):
         errors.append("profile subject_id must match registry subject_id")
     sections = template.get("profile_sections")

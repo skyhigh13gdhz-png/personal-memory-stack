@@ -77,6 +77,14 @@ python3 scripts/memory_layout.py register \
   --subject-id project:personal-memory \
   --path '20-长期记忆/项目/AI 外置记忆.md'
 
+# 正式发布或更新应使用 publish：先校验旧哈希，再原子写入并刷新 manifest
+python3 scripts/memory_layout.py publish \
+  --manifest 90-系统/生成清单/memory-layout-manifest.json \
+  --vault /path/to/vault \
+  --subject-id project:personal-memory \
+  --path '20-长期记忆/项目/AI 外置记忆.md' \
+  --source /path/to/generated.md
+
 # 人工检查计划后执行，并生成回滚日志
 python3 scripts/memory_layout.py apply \
   --plan /tmp/memory-layout-plan.json \
@@ -93,6 +101,7 @@ python3 scripts/memory_layout.py rollback \
 
 - 只移动 manifest 中 `managed=true` 的系统生成文件；
 - 文件内容哈希变化时拒绝移动，避免覆盖人工编辑；
+- `publish` 对未登记但已存在的文件拒绝接管，对登记后发生人工修改的文件拒绝覆盖，重复发布相同内容为无副作用操作；
 - 目标存在时拒绝，不静默覆盖；
 - 所有移动执行前先整体预检，避免迁移一半才失败；
 - 拒绝 `..`、绝对路径和通过符号链接逃逸 Vault；

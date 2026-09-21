@@ -169,6 +169,41 @@ class MemoryLayoutTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "projected file missing"):
                 LAYOUT.register_projection(manifest, Path(directory), "project:memory", "missing.md")
 
+    def test_publish_is_idempotent_and_refuses_external_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            manifest = {"schema_version": "memory-layout-manifest-v1", "layout_version": 1, "entries": []}
+            manifest, action = LAYOUT.publish_projection(
+                manifest, vault, "project:memory", "objects/memory.md", b"# v1\n"
+            )
+            self.assertEqual(action, "created")
+            manifest, action = LAYOUT.publish_projection(
+                manifest, vault, "project:memory", "objects/memory.md", b"# v1\n"
+            )
+            self.assertEqual(action, "unchanged")
+            manifest, action = LAYOUT.publish_projection(
+                manifest, vault, "project:memory", "objects/memory.md", b"# v2\n"
+            )
+            self.assertEqual(action, "updated")
+            projected = vault / "objects" / "memory.md"
+            projected.write_text("human edit\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "changed outside projector"):
+                LAYOUT.publish_projection(
+                    manifest, vault, "project:memory", "objects/memory.md", b"# v3\n"
+                )
+
+    def test_publish_refuses_existing_untracked_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            projected = vault / "objects" / "memory.md"
+            projected.parent.mkdir()
+            projected.write_text("human file\n", encoding="utf-8")
+            manifest = {"schema_version": "memory-layout-manifest-v1", "entries": []}
+            with self.assertRaisesRegex(ValueError, "untracked"):
+                LAYOUT.publish_projection(
+                    manifest, vault, "project:memory", "objects/memory.md", b"generated\n"
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

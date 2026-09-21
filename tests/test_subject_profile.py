@@ -48,6 +48,16 @@ class SubjectProfileTests(unittest.TestCase):
                 {"key": "summary", "title": "这是什么", "kind": "paragraph", "required": False},
             ]))
 
+    def test_trial_profile_is_valid_for_controlled_rollout(self):
+        value = {
+            "schema_version": "subject-profile-v1", "review_status": "trial", "subject_id": "x:1",
+            "content": {"summary": "试运行对象。"},
+        }
+        result = PROFILE.validate(value, subject(), template([
+            {"key": "summary", "title": "这是什么", "kind": "paragraph", "required": True},
+        ]))
+        self.assertEqual(result["review_status"], "trial")
+
     def test_every_configured_type_has_a_satisfiable_profile_contract(self):
         root = Path(__file__).parents[1]
         layout = json.loads((root / "config" / "memory-layout.json").read_text(encoding="utf-8"))

@@ -306,6 +306,42 @@ def register_projection(
     return {**manifest, "entries": result}
 
 
+def publish_projection(
+    manifest: dict[str, Any], vault: Path, subject_id: str, relative_path: str, content: bytes
+) -> tuple[dict[str, Any], str]:
+    """Create or safely update one managed projection without overwriting external edits."""
+    if manifest.get("schema_version") != "memory-layout-manifest-v1":
+        raise ValueError("manifest schema_version must be memory-layout-manifest-v1")
+    entries = manifest.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("manifest entries must be an array")
+    matches = [entry for entry in entries if entry.get("subject_id") == subject_id]
+    if len(matches) > 1:
+        raise ValueError(f"duplicate manifest subject: {subject_id}")
+    path = str(safe_relative(relative_path, "projection.path"))
+    destination = vault_path(vault, path, "projection.path")
+    digest = hashlib.sha256(content).hexdigest()
+    if matches:
+        entry = matches[0]
+        if entry.get("managed") is not True:
+            raise ValueError(f"projection is not managed: {subject_id}")
+        if entry.get("path") != path:
+            raise ValueError("projection path differs from manifest; use layout migration")
+        if not destination.is_file():
+            raise ValueError(f"managed projection missing: {path}")
+        if file_sha256(destination) != entry.get("sha256"):
+            raise ValueError(f"managed projection changed outside projector: {path}")
+        if entry["sha256"] == digest:
+            return manifest, "unchanged"
+    elif destination.exists():
+        raise ValueError(f"refusing to adopt existing untracked file: {path}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    temporary.write_bytes(content)
+    temporary.replace(destination)
+    return register_projection(manifest, vault, subject_id, path), "created" if not matches else "updated"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -314,6 +350,7 @@ def main() -> int:
     apply_cmd = sub.add_parser("apply")
     rollback_cmd = sub.add_parser("rollback")
     register_cmd = sub.add_parser("register")
+    publish_cmd = sub.add_parser("publish")
     for child in (validate_cmd, plan_cmd):
         child.add_argument("--layout", required=True, type=Path)
         child.add_argument("--subjects", required=True, type=Path)
@@ -329,6 +366,11 @@ def main() -> int:
     register_cmd.add_argument("--vault", required=True, type=Path)
     register_cmd.add_argument("--subject-id", required=True)
     register_cmd.add_argument("--path", required=True)
+    publish_cmd.add_argument("--manifest", required=True, type=Path)
+    publish_cmd.add_argument("--vault", required=True, type=Path)
+    publish_cmd.add_argument("--subject-id", required=True)
+    publish_cmd.add_argument("--path", required=True)
+    publish_cmd.add_argument("--source", required=True, type=Path)
     args = parser.parse_args()
     if args.command == "validate":
         paths = desired_paths(load(args.layout), load(args.subjects))
@@ -345,10 +387,16 @@ def main() -> int:
     elif args.command == "rollback":
         rollback(load(args.journal), args.vault)
         print("[✓] rolled back managed layout moves")
-    else:
+    elif args.command == "register":
         result = register_projection(load(args.manifest), args.vault, args.subject_id, args.path)
         write_json(args.manifest, result)
         print(f"[✓] registered managed projection: {args.subject_id} -> {args.path}")
+    else:
+        result, action = publish_projection(
+            load(args.manifest), args.vault, args.subject_id, args.path, args.source.read_bytes()
+        )
+        write_json(args.manifest, result)
+        print(f"[✓] {action} managed projection: {args.subject_id} -> {args.path}")
     return 0
 
 
