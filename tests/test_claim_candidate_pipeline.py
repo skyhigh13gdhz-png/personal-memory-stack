@@ -41,6 +41,12 @@ def response_for_fixture():
 
 
 class ClaimCandidatePipelineTests(unittest.TestCase):
+    def test_parse_json_object_accepts_fenced_provider_output(self):
+        self.assertEqual(
+            PIPELINE.parse_json_object('```json\n{"labels": []}\n```'),
+            {"labels": []},
+        )
+
     def setUp(self):
         self.bundle = PIPELINE.load_bundle(FIXTURE)
         self.documents = PIPELINE.resolve_documents(self.bundle, FIXTURE.parent)

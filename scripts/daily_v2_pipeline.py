@@ -29,6 +29,12 @@ CLAIMS = load_module("claim_candidate_pipeline", SCRIPT_DIR / "claim_candidate_p
 EDITORIAL = load_module("render_daily_v2_editorial", SCRIPT_DIR / "render_daily_v2_editorial.py")
 SCORER = load_module("score_daily_v2", SCRIPT_DIR / "score_daily_v2.py")
 PROMPT_VERSION = "daily-editorial-v2.1"
+CATEGORY_SECTION = EDITORIAL.CATEGORY_SECTION
+CATEGORY_LABEL = {
+    "sleep_body": "补充记录", "food": "饮食记录", "exercise": "运动记录",
+    "work_project": "项目记录", "trading_finance": "交易记录",
+    "relationships_home": "家庭记录", "pet": "宠物记录", "leisure": "休闲记录", "other": "其他记录",
+}
 
 
 def load_classified(path: Path) -> dict[str, Any]:
@@ -156,6 +162,92 @@ def normalize_editorial_structure(editorial: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def complete_small_omissions(
+    editorial: dict[str, Any], classified: dict[str, Any], *, max_missing: int = 3
+) -> dict[str, Any]:
+    """Deterministically retain a few model-omitted facts in their classified section."""
+    completed = json.loads(json.dumps(editorial, ensure_ascii=False))
+    referenced: set[str] = set()
+    reference_sections: dict[str, set[str]] = {}
+    for section in completed.get("sections", []):
+        for group in section.get("groups", []):
+            for item in group.get("items", []):
+                for unit_id in item.get("evidence_unit_ids", []):
+                    referenced.add(unit_id)
+                    reference_sections.setdefault(unit_id, set()).add(section["section_id"])
+    day = completed.get("date")
+    visible = [
+        unit for unit in classified.get("units", [])
+        if unit.get("date") == day and unit.get("visibility") in {"daily", "both"}
+    ]
+    missing = [unit for unit in visible if unit["unit_id"] not in referenced]
+    misplaced = [
+        unit for unit in visible if unit["unit_id"] in referenced
+        and CATEGORY_SECTION.get(unit.get("category", "other"), "other")
+        not in reference_sections.get(unit["unit_id"], set())
+    ]
+    additions = missing + misplaced
+    if not additions or len(additions) > max_missing:
+        return completed
+    section_map = {section["section_id"]: section for section in completed.get("sections", [])}
+    subject_names = {item["subject_id"]: item["canonical_name"] for item in classified.get("subjects", [])}
+    for unit in additions:
+        category = unit.get("category", "other")
+        section_id = CATEGORY_SECTION.get(category, "other")
+        section = section_map.get(section_id)
+        if section is None:
+            section = {"section_id": section_id, "groups": []}
+            completed.setdefault("sections", []).append(section)
+            section_map[section_id] = section
+        facts = [group for group in section["groups"] if group.get("group_kind") == "facts"]
+        if section_id == "project_work":
+            title = next((subject_names[item] for item in unit.get("subject_ids", []) if item in subject_names), "其他项目")
+            group = next((item for item in facts if item.get("title") == title), None)
+            if group is None:
+                group = {"group_kind": "facts", "title": title, "items": []}
+                section["groups"].append(group)
+        else:
+            group = facts[0] if facts else None
+            if group is None:
+                group = {"group_kind": "facts", "items": []}
+                section["groups"].insert(0, group)
+        new_item = {
+            "label": CATEGORY_LABEL.get(category, "补充记录"),
+            "text": unit.get("summary") or unit["text"],
+            "evidence_unit_ids": [unit["unit_id"]],
+        }
+        if unit in misplaced:
+            new_item["facet_split"] = True
+            for existing_section in completed.get("sections", []):
+                for existing_group in existing_section.get("groups", []):
+                    if existing_group.get("group_kind") != "facts":
+                        continue
+                    for existing_item in existing_group.get("items", []):
+                        if unit["unit_id"] in existing_item.get("evidence_unit_ids", []):
+                            existing_item["facet_split"] = True
+        group["items"].append(new_item)
+    return completed
+
+
+def apply_style_replacements(editorial: dict[str, Any], style: dict[str, Any]) -> dict[str, Any]:
+    replaced = json.loads(json.dumps(editorial, ensure_ascii=False))
+    replacements = style.get("replacements", {})
+    if not isinstance(replacements, dict):
+        return replaced
+    for section in replaced.get("sections", []):
+        for group in section.get("groups", []):
+            for item in group.get("items", []):
+                for field in ("label", "text"):
+                    value = item.get(field)
+                    if not isinstance(value, str):
+                        continue
+                    for source, target in replacements.items():
+                        if isinstance(source, str) and isinstance(target, str):
+                            value = value.replace(source, target)
+                    item[field] = value
+    return replaced
+
+
 def source_hash(classified: dict[str, Any], day: str, style: dict[str, Any], model: str) -> str:
     units, _ = alias_units(classified, day)
     canonical = json.dumps({
@@ -200,23 +292,30 @@ def write_rejection(output: Path, editorial: dict[str, Any], run: dict[str, Any]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("prepare", "extract"):
+    for command in ("prepare", "extract", "recover"):
         child = subparsers.add_parser(command)
         child.add_argument("classified", type=Path)
         child.add_argument("--date", required=True)
         child.add_argument("--style", required=True, type=Path)
         child.add_argument("--output", required=True, type=Path)
-        if command == "prepare":
+        if command in {"prepare", "recover"}:
             child.add_argument("--response", required=True, type=Path)
     args = parser.parse_args()
     classified = load_classified(args.classified)
     style = json.loads(args.style.read_text(encoding="utf-8"))
     _, aliases = alias_units(classified, args.date)
-    if args.command == "prepare":
+    if args.command in {"prepare", "recover"}:
         response = json.loads(args.response.read_text(encoding="utf-8"))
-        editorial = normalize_editorial_structure(expand_aliases(response, aliases))
+        if args.command == "recover":
+            if response.get("schema_version") != "daily-v2-rejected-v1":
+                raise ValueError("recover response must be daily-v2-rejected-v1")
+            editorial = normalize_editorial_structure(response["response"])
+        else:
+            editorial = normalize_editorial_structure(expand_aliases(response, aliases))
+        editorial = apply_style_replacements(complete_small_omissions(editorial, classified), style)
         result = package(editorial, classified, style, run={
-            "mode": "offline-response", "calls": 0, "prompt_version": PROMPT_VERSION
+            "mode": "deterministic-recovery" if args.command == "recover" else "offline-response",
+            "calls": 0, "prompt_version": PROMPT_VERSION
         })
     else:
         api_key = os.environ.get("DAILY_V2_LLM_API_KEY") or os.environ.get(
@@ -236,8 +335,17 @@ def main() -> int:
             if current.get("generation", {}).get("input_hash") == digest:
                 print(f"[=] unchanged daily-v2 input; skipped LLM: {args.output}")
                 return 0
-        response, metrics = CLAIMS.request_llm(base_url, api_key, model, messages(classified, args.date, style))
-        editorial = normalize_editorial_structure(expand_aliases(response, aliases))
+        request_options = {
+            "max_tokens": int(os.environ.get("DAILY_V2_LLM_MAX_TOKENS", "8192")),
+            "thinking": os.environ.get("DAILY_V2_LLM_THINKING", "disabled"),
+            "timeout": int(os.environ.get("DAILY_V2_LLM_TIMEOUT", "300")),
+        }
+        response, metrics = CLAIMS.request_llm(
+            base_url, api_key, model, messages(classified, args.date, style), **request_options
+        )
+        editorial = apply_style_replacements(complete_small_omissions(
+            normalize_editorial_structure(expand_aliases(response, aliases)), classified
+        ), style)
         run = {
             "mode": "live", "calls": 1, "prompt_version": PROMPT_VERSION,
             "model": model, "input_hash": digest, **metrics,
@@ -248,8 +356,11 @@ def main() -> int:
             repair_response, repair_metrics = CLAIMS.request_llm(
                 base_url, api_key, model,
                 repair_messages(classified, args.date, style, response, first_error, aliases),
+                **request_options,
             )
-            repaired = normalize_editorial_structure(expand_aliases(repair_response, aliases))
+            repaired = apply_style_replacements(complete_small_omissions(
+                normalize_editorial_structure(expand_aliases(repair_response, aliases)), classified
+            ), style)
             repaired_run = {
                 **run,
                 "calls": 2,

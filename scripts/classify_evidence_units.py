@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,21 @@ IMPORTANCES = {"low", "normal", "high"}
 
 def is_structural_heading(text: str) -> bool:
     stripped = text.strip()
-    return len(stripped) <= 24 and stripped.endswith(("：", ":"))
+    if not stripped:
+        return True
+    if stripped in {"```", "---", ">", "**", "`**"}:
+        return True
+    if stripped.startswith(("# ", "## ", "### ", "#### ", "> [!")):
+        return True
+    if stripped.startswith(("记录状态：", "记录状态:")):
+        return True
+    if re.fullmatch(r"</?[A-Za-z][^>]*>", stripped):
+        return True
+    if re.fullmatch(r"(?:abstract|note|info|tip|warning|danger|quote)\].*", stripped, re.IGNORECASE):
+        return True
+    if re.fullmatch(r">?\s*\*\*[^*]+\*\*", stripped):
+        return True
+    return len(stripped) <= 32 and stripped.endswith(("：", ":"))
 
 
 def load_units(path: Path) -> dict[str, Any]:
@@ -317,16 +332,67 @@ def main() -> int:
         )
         if not api_key:
             raise SystemExit("missing UNIT_LLM_API_KEY/HINDSIGHT_API_RETAIN_LLM_API_KEY")
-        response, metrics = PIPELINE.request_llm(
-            base_url,
-            api_key,
-            model,
-            classification_messages(evidence),
-        )
+        request_options = {
+            "max_tokens": int(os.environ.get("UNIT_LLM_MAX_TOKENS", "8192")),
+            "thinking": os.environ.get("UNIT_LLM_THINKING", "disabled"),
+            "timeout": int(os.environ.get("UNIT_LLM_TIMEOUT", "300")),
+        }
+        non_structural = [unit for unit in evidence["units"] if not is_structural_heading(unit["text"])]
+        batch_size = int(os.environ.get("UNIT_LLM_BATCH_SIZE", "12"))
+        batches = [non_structural[index:index + batch_size] for index in range(0, len(non_structural), batch_size)]
+        all_labels: list[dict[str, Any]] = []
+        call_metrics: list[dict[str, Any]] = []
+        calls = 0
+        for batch_index, batch in enumerate(batches, start=1):
+            batch_evidence = {**evidence, "units": batch}
+            expected_ids = {unit["unit_id"] for unit in batch}
+            first_error = None
+            for attempt in range(2):
+                try:
+                    batch_response, metrics = PIPELINE.request_llm(
+                        base_url, api_key, model, classification_messages(batch_evidence), **request_options
+                    )
+                    calls += 1
+                    labels = batch_response.get("labels") if isinstance(batch_response, dict) else None
+                    returned_ids = {
+                        item.get("unit_id") for item in labels if isinstance(item, dict)
+                    } if isinstance(labels, list) else set()
+                    allowed_keys = {"unit_id", "category", "summary", "visibility", "importance", "subject_ids"}
+                    well_formed = isinstance(labels, list) and all(
+                        isinstance(item, dict)
+                        and set(item) == allowed_keys
+                        and item.get("category") in CATEGORIES
+                        and item.get("visibility") in VISIBILITIES
+                        and item.get("importance") in IMPORTANCES
+                        and isinstance(item.get("summary"), str) and bool(item["summary"].strip())
+                        and isinstance(item.get("subject_ids"), list)
+                        for item in labels
+                    )
+                    if not well_formed or returned_ids != expected_ids:
+                        raise ValueError(
+                            f"batch schema/coverage mismatch: expected={len(expected_ids)} returned={len(returned_ids)}"
+                        )
+                    break
+                except (RuntimeError, ValueError) as exc:
+                    first_error = exc
+                    if attempt == 1:
+                        raise
+            if first_error is not None:
+                metrics["retry_reason"] = str(first_error)
+            all_labels.extend(labels)
+            call_metrics.append({"batch": batch_index, **metrics})
+        response = {"labels": all_labels}
+        metrics = {
+            "batches": len(batches),
+            "batch_metrics": call_metrics,
+            "prompt_tokens": sum(item.get("prompt_tokens") or 0 for item in call_metrics),
+            "completion_tokens": sum(item.get("completion_tokens") or 0 for item in call_metrics),
+            "total_tokens": sum(item.get("total_tokens") or 0 for item in call_metrics),
+        }
         result = classify_response(evidence, response)
         result["llm_run"] = {
             "mode": "live",
-            "calls": 1,
+            "calls": calls,
             "model": model,
             "input_hash": input_hash(evidence, model),
             **metrics,

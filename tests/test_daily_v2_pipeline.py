@@ -65,6 +65,23 @@ class DailyV2PipelineTests(unittest.TestCase):
         self.assertIn("missing u01", result[-1]["content"])
         self.assertNotIn("unit-long-hash-a", result[-1]["content"])
 
+    def test_completes_small_omission_in_primary_section(self):
+        editorial = {
+            "schema_version": "daily-view-v2", "date": "2026-01-01",
+            "sections": [{"section_id": "food", "groups": [{"group_kind": "facts", "items": []}]}],
+        }
+        result = PIPELINE.complete_small_omissions(editorial, classified_fixture())
+        item = result["sections"][0]["groups"][0]["items"][0]
+        self.assertEqual(item["evidence_unit_ids"], ["unit-long-hash-a"])
+        self.assertEqual(item["label"], "饮食记录")
+
+    def test_applies_configured_style_replacements(self):
+        editorial = {"sections": [{"groups": [{"items": [{"label": "关系", "text": "跟妻子共进晚餐"}]}]}]}
+        result = PIPELINE.apply_style_replacements(
+            editorial, {"replacements": {"妻子": "老婆", "共进": "一起吃"}}
+        )
+        self.assertEqual(result["sections"][0]["groups"][0]["items"][0]["text"], "跟老婆一起吃晚餐")
+
     def test_expands_short_ids_before_validation(self):
         response = {
             "schema_version": "daily-view-v2", "date": "2026-01-01",

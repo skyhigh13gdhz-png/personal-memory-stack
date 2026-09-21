@@ -41,6 +41,29 @@ PUNCTUATION_EQUIVALENTS = str.maketrans({
 })
 
 
+def parse_json_object(content: Any) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise ValueError("content is not a string")
+    candidates = [content.strip()]
+    stripped = content.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        inner = stripped[3:-3].strip()
+        if inner.lower().startswith("json"):
+            inner = inner[4:].lstrip()
+        candidates.append(inner)
+    first, last = stripped.find("{"), stripped.rfind("}")
+    if first >= 0 and last > first:
+        candidates.append(stripped[first:last + 1])
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("content does not contain a valid JSON object")
+
+
 def load_bundle(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -125,13 +148,22 @@ def request_llm(
     api_key: str,
     model: str,
     messages: list[dict[str, str]],
+    *,
+    max_tokens: int | None = None,
+    thinking: str | None = None,
+    timeout: int = 180,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    payload = json.dumps({
+    body: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": 0,
         "response_format": {"type": "json_object"},
-    }, ensure_ascii=False).encode()
+    }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    if thinking is not None:
+        body["thinking"] = {"type": thinking}
+    payload = json.dumps(body, ensure_ascii=False).encode()
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=payload,
@@ -140,15 +172,22 @@ def request_llm(
     )
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             result = json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read(1000).decode(errors="replace")
         raise RuntimeError(f"LLM HTTP {exc.code}: {detail}") from exc
+    raw_content: Any = None
     try:
-        content = json.loads(result["choices"][0]["message"]["content"])
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("LLM did not return a valid JSON object") from exc
+        raw_content = result["choices"][0]["message"]["content"]
+        content = parse_json_object(raw_content)
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        choices = result.get("choices") or [{}]
+        finish_reason = choices[0].get("finish_reason") if isinstance(choices[0], dict) else None
+        size = len(raw_content) if isinstance(raw_content, str) else None
+        raise RuntimeError(
+            f"LLM did not return a valid JSON object (finish_reason={finish_reason}, content_chars={size})"
+        ) from exc
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
     return content, {
         "response_id": str(result.get("id") or ""),
@@ -156,6 +195,9 @@ def request_llm(
         "prompt_tokens": usage.get("prompt_tokens"),
         "completion_tokens": usage.get("completion_tokens"),
         "total_tokens": usage.get("total_tokens"),
+        "finish_reason": (result.get("choices") or [{}])[0].get("finish_reason"),
+        "thinking": thinking,
+        "max_tokens": max_tokens,
     }
 
 

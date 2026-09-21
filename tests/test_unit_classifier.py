@@ -45,6 +45,16 @@ def evidence_fixture():
 
 
 class UnitClassifierTests(unittest.TestCase):
+    def test_markdown_chrome_is_structural(self):
+        structural = [
+            "## 睡眠复盘", "```", "---", ">", "**", "`**", "> [!note]", "note] 记录说明",
+            "> **健康基石**", "</font>", "- **改善计划**：",
+        ]
+        for text in structural:
+            with self.subTest(text=text):
+                self.assertTrue(CLASSIFIER.is_structural_heading(text))
+        self.assertFalse(CLASSIFIER.is_structural_heading("- **早餐**：10:00，1个玉米1个鸡蛋"))
+
     def test_partial_response_preserves_every_unit_with_fallback(self):
         response = {"labels": [{
             "unit_id": "unit-1",
