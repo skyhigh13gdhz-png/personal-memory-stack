@@ -179,3 +179,12 @@ Gateway 单元测试 6/6 通过；重新部署后 Retain/Recall/Reflect 全链�
 - `memory_layout.py register` 可在投影完成后刷新受管文件路径与哈希，补齐“生成 → 登记 → 安全迁移”的闭环；
 - 增加人类可读 Subject Registry 审阅页；人物、宠物、账户和内部组件证据不足时不自动创建空壳对象；
 - 正式 manifest 当前为空，意味着现有 Vault 文件均未被擅自接管，首次只读计划只会报告待投影对象。
+
+## 14. 人类视图与机器元数据分层
+
+- 修正“`subject_id` 属于人类有用属性”的错误表达：它是永久机器身份，用户日常无需查看或维护；
+- 新增 `HUMAN_VIEW_CONTRACT.md`，规定新的人类页面默认不使用 YAML 属性展示机器治理字段；
+- Subject Registry 明确为低频系统治理页，只在对象晋升、纠正分类/归属、改名、合并和归档时使用；模板通常由分类自动选择；
+- Registry 可见正文改为中文分类、自然语言归属、存放位置和长期跟踪理由，模板 ID、对象 ID 和投影版本移入隐藏注释；
+- Living Memory Object 移除 YAML 中的 type/subject_id/projection，只保留正文可理解的“更新至”日期；派生状态不显示工程术语，假设改写为“待确认”；
+- Daily V2 默认已隐藏证据详情；旧 Daily V1 的重复概览和来源 UUID 被标记为历史展示问题，不再作为新输出规范。

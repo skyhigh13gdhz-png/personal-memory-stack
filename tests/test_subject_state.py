@@ -65,10 +65,14 @@ class SubjectStateTests(unittest.TestCase):
     def test_project_view_exposes_derived_state_without_audit_noise(self):
         text = RENDERER.render(state(), claims())
         self.assertIn("## 当前阶段", text)
-        self.assertIn("项目处于集成阶段。（派生状态）", text)
+        self.assertIn("项目处于集成阶段。", text)
+        self.assertNotIn("（派生状态）", text)
+        self.assertFalse(text.startswith("---"))
+        self.assertIn("> 更新至 2026-01-02", text)
         self.assertIn("## 演进记录", text)
         visible = "\n".join(line for line in text.splitlines() if "<!--" not in line)
         self.assertNotIn("evidence_claim_ids", visible)
+        self.assertNotIn("subject_id", visible)
 
     def test_supersede_requires_closed_state_with_same_key(self):
         value = state()

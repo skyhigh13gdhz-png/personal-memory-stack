@@ -22,6 +22,15 @@ class SubjectRegistryReviewTests(unittest.TestCase):
         self.assertIn("#### 加密交易节奏", text)
         self.assertIn("Memory Gateway、Hindsight", text)
         self.assertIn("不创建空壳页面", text)
+        self.assertFalse(text.startswith("---"))
+        visible = "\n".join(line for line in text.splitlines() if "<!--" not in line)
+        self.assertNotIn("subject_id", visible)
+        self.assertNotIn("project-v1", visible)
+        self.assertNotIn("subject-registry-review-v1", visible)
+        self.assertIn("- 分类：项目", visible)
+        self.assertIn("低频使用的系统治理页", visible)
+        self.assertIn("模板通常由分类自动选择", visible)
+        self.assertNotIn("parent_subject_id", visible)
 
 
 if __name__ == "__main__":

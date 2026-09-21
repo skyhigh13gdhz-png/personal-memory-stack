@@ -37,16 +37,13 @@ def render(state: dict[str, Any], claims: dict[str, dict[str, Any]]) -> str:
     if subject["subject_type"] not in {"project", "system"}:
         raise ValueError("V1 renderer currently supports project/system only")
     current = [item for item in state["state_items"] if item["lifecycle"] in {"current", "reopened"}]
+    metadata = {
+        "subject_id": subject["subject_id"], "subject_type": subject["subject_type"],
+        "as_of": state["as_of"], "projection": "memory-subject-v2",
+    }
     lines = [
-        "---",
-        f"type: {subject['subject_type']}",
-        f"subject_id: {subject['subject_id']}",
-        f"as_of: {state['as_of']}",
-        "projection: memory-subject-v1",
-        "---",
-        "",
-        f"# {subject['canonical_name']}",
-        "",
+        f"# {subject['canonical_name']}", "", f"> 更新至 {state['as_of']}", "",
+        "<!-- memory-subject " + json.dumps(metadata, ensure_ascii=False, separators=(",", ":")) + " -->", "",
     ]
     for facet in PROJECT_ORDER:
         items = [item for item in current if item["facet"] == facet]
@@ -55,10 +52,8 @@ def render(state: dict[str, Any], claims: dict[str, dict[str, Any]]) -> str:
         lines.extend([f"## {FACET_HEADINGS[facet]}", ""])
         for item in items:
             marker = ""
-            if item["state_type"] == "derived_state":
-                marker = "（派生状态）"
-            elif item["state_type"] == "hypothesis":
-                marker = "（未确认）"
+            if item["state_type"] == "hypothesis":
+                marker = "（待确认）"
             lines.append(f"- {item['statement']}{marker}")
             audit = {
                 "state_id": item["state_id"], "state_type": item["state_type"],

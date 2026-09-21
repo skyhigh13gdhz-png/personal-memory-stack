@@ -199,6 +199,8 @@ Vault 布局不再硬编码在模板里。`config/memory-layout.json` 分别配�
 
 `scripts/render_subject_registry.py` 将机器配置生成人可读的对象登记表，用于在正式投影或迁移之前检查分类、模板、从属关系和目标路径。
 
+所有面向 Obsidian 阅读的输出遵循 [HUMAN_VIEW_CONTRACT.md](HUMAN_VIEW_CONTRACT.md)：默认不显示机器 ID、哈希、模板版本和证据索引，审计信息进入隐藏注释或独立产物。
+
 ## 本地无副作用检查
 
 ```bash
