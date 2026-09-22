@@ -6,6 +6,9 @@
 
 > **2026-09-22 紧急架构冻结，优先级高于本文后续旧任务**：Daily V2 的“句子分类后重组”路线已判定为架构缺陷并冻结。WB-07 已完成并由主线接受；WB-04/WB-05/WB-06 继续冻结，不合并 main、不安装调度器。先阅读 `DAILY_PRODUCT_RESET.md`、`EVENT_BLOCK_SPEC.md`、`reviews/WB07_EVENT_FIRST_RED_TEAM.md` 和 `config/daily-v2.freeze`，然后从 WB-08 开始。
 
+> **WB-08～WB-11 首轮复核状态**：详见 `WORKBUDDY_REVIEW_WB08_11.md`。现有四提交不得合并；保留原 SHA，
+> 按 `WB-08R → WB-09R → WB-10R → WB-11R` 追加修复提交，不重写历史。修复期间仍不得解冻或写正式日报。
+
 1. `WB-07` Event-first 日报架构独立红队评审；
 2. `WB-08` 原文直投 LLM 基线与匿名对照包；
 3. `WB-09` 事件边界反例集与盲评量表；
