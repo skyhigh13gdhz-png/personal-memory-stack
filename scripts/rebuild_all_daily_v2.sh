@@ -26,6 +26,10 @@ if [[ "$MODE" != "preview" && "$MODE" != "run" ]]; then
   echo "用法: bash scripts/rebuild_all_daily_v2.sh [preview|run] [--confirm] [--date-from=YYYY-MM-DD] [--date-to=YYYY-MM-DD]" >&2
   exit 2
 fi
+if [[ "$MODE" == "run" && -f "$REPO_DIR/config/daily-v2.freeze" ]]; then
+  echo "Daily V2 已冻结，禁止全量重建和发布。请阅读 DAILY_PRODUCT_RESET.md。" >&2
+  exit 3
+fi
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090

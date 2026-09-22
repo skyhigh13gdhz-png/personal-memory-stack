@@ -15,7 +15,9 @@ LABEL="com.skyhighmonica.personal-memory-incremental"
 RUNNER_LABEL="personal-memory-incremental"
 ACTION="${1:-preview}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="$SCRIPT_DIR/local_incremental_runner.py"
+FREEZE_MARKER="$REPO_DIR/config/daily-v2.freeze"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/$RUNNER_LABEL"
 STATE_DIR="$HOME/Library/Application Support/$RUNNER_LABEL"
@@ -79,6 +81,10 @@ case "$ACTION" in
     echo "[→] 确认无误后执行: bash $0 install --confirm"
     ;;
   install)
+    if [[ -f "$FREEZE_MARKER" ]]; then
+      echo "Daily V2 已冻结，禁止重新安装旧增量日报调度器。请阅读 DAILY_PRODUCT_RESET.md。" >&2
+      exit 3
+    fi
     if (( CONFIRM == 0 )); then
       echo '[✗] 真实安装会注册本机定时任务，必须显式加 --confirm' >&2
       echo "[→] 先运行: bash $0 preview" >&2

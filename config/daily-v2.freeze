@@ -1,0 +1,7 @@
+Daily V2 已于 2026-09-22 冻结。
+
+原因：句子级 Evidence Unit 被错误当作人类阅读单位，先分类后重组破坏了事件连贯性，
+并通过固定栏目产生了原文不存在的因果暗示。
+
+冻结期间不得自动生成、全量重建或发布 Daily V2。原始记录同步、Hindsight、Gateway、
+Evidence 审计和长期记忆基础设施不受影响。解冻必须通过 DAILY_PRODUCT_RESET.md 定义的对照验收。

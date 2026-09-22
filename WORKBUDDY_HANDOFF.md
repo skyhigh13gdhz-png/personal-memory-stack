@@ -4,10 +4,14 @@
 
 ## 当前领取顺序
 
-1. `WB-04` 日报分类体系配置化；
-2. `WB-05` 派生缓存有效性与可恢复重建；
-3. `WB-06` 运行状态、失败日期与隔离件可见性；
-4. `WB-02` 图片附件 A07 可行性验证。
+> **2026-09-22 紧急架构冻结，优先级高于本文后续旧任务**：Daily V2 的“句子分类后重组”路线已判定为架构缺陷并冻结。如正在执行 WB-04/WB-05/WB-06，立即停在当前安全 checkpoint，保留独立 commit 与测试记录，不继续串行、不合并 main、不安装调度器。先阅读 `DAILY_PRODUCT_RESET.md` 和 `config/daily-v2.freeze`，然后领取 WB-07。
+
+1. `WB-07` Event-first 日报架构独立红队评审；
+2. `WB-08` Event Block schema 与隔离区原型（WB-07 通过后）；
+3. `WB-04` 日报分类体系配置化（冻结，不再继续）；
+4. `WB-05` 派生缓存有效性与可恢复重建（暂停，待新 schema）；
+5. `WB-06` 运行状态、失败日期与隔离件可见性（暂停，待新状态语义）；
+6. `WB-02` 图片附件 A07 可行性验证。
 
 支持两种执行模式：
 
@@ -209,6 +213,52 @@
 - 提供示例页面，但不得使用真实个人记录或真实绝对路径。
 
 ## WorkBuddy 完工回传格式
+
+## WB-07 Event-first 架构独立红队评审（立即执行）
+
+### 定位
+
+你是独立 Bar Raiser，不是 Codex 方案的实现助手。先审架构，不写生产代码。
+以“日报必须比原始记录更清晰，否则不发布”为唯一产品目标。
+
+### 必读
+
+- `DAILY_PRODUCT_RESET.md`
+- `DAILY_VIEW_V2_SPEC.md`
+- `DESIGN_V3.md`
+- `GATE_A_REVIEW.md`
+- `scripts/build_evidence_units.py`
+- `scripts/classify_evidence_units.py`
+- `scripts/daily_v2_pipeline.py`
+- `scripts/render_daily_v2_editorial.py`
+- `scripts/score_daily_v2.py`
+
+### 交付
+
+新增 `reviews/WB07_EVENT_FIRST_RED_TEAM.md`，至少回答：
+
+1. `DAILY_PRODUCT_RESET.md` 的 RCA 哪些有证据，哪些仍是未验证假设；
+2. Event Block 是否真的解决连贯性，还是只把句子过度切换成段落过度切；
+3. 如何处理一个事件涉及多个主题、一个主题包含多个事件、长文无明确标题、及跨文档补记；
+4. 事件内部的并列、转折、时间和因果如何表示，如何禁止版面伪因果；
+5. 哪些环节应由 LLM 判断，哪些必须由程序确定；
+6. “直接原文→LLM”作为更简单基线时，Event-first 必须额外证明哪些价值；
+7. 给出可以否决方案的硬门禁，不要只给“建议优化”；
+8. 列出你认为应删除而非重写的旧组件。
+
+使用合成/脱敏示例，不读真实 Vault，不调用外部 API。允许修改决策文档，但必须以建议 diff 单独提交，不得解冻任何入口。
+
+## WB-08 Event Block schema 与隔离区原型（WB-07 被主线复核后再开始）
+
+仅在 Codex 回复 WB-07 评审后开始。目标是定义与验证 Event Block 中间层，不生成正式日报。
+
+1. 输出必须包含原始边界、event ID、内部关系、Evidence 引用和可选检索标签；
+2. 使用至少三类合成 fixture：交易背景+操作+结果、长篇伴侣讨论、勾选待办+不完整处理记录；
+3. 验证事件不因分类而拆散、因果默认不成立、孤立待办不进正文；
+4. 所有产物写入 `local-evaluation/event-first/`，生产路径和 Vault 零写入；
+5. 单独 commit，全量测试绿，不修改 freeze marker。
+
+交付报告需写明它相比“直接 LLM 基线”多出的复杂度、预期收益和不值得继续的停工条件。
 
 ```text
 任务编号：

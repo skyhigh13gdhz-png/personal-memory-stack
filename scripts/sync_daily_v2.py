@@ -16,6 +16,7 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+FREEZE_MARKER = SCRIPT_DIR.parent / "config" / "daily-v2.freeze"
 RECORD = re.compile(
     r"^## (?P<label>[^\n]+)\n\n(?P<text>.*?)\n\n"
     r"<!-- personal-memory-record (?P<meta>\{.*?\}) -->\n\n---(?:\n|$)",
@@ -70,7 +71,14 @@ def main() -> int:
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--replace-existing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--allow-frozen-legacy", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if FREEZE_MARKER.exists() and not args.dry_run and not args.allow_frozen_legacy:
+        raise RuntimeError(
+            "Daily V2 is frozen after an architecture review; generation and publishing are disabled. "
+            "See DAILY_PRODUCT_RESET.md."
+        )
 
     start = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to)
