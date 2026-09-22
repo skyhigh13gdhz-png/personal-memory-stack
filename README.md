@@ -98,6 +98,71 @@ bash scripts/install_macos_obsidian_sync.sh
 
 同步时保留目标目录本身，仅增量更新其内部文件，避免 Obsidian 因目录整体替换而丢失文件监听。旧投影仍会先完整备份到相邻的隐藏 `.history` 目录。
 
+## 本机无人值守增量运行
+
+`scripts/local_incremental_runner.py` 把本机三个既有阶段串成一轮：同步原始投影 → 补缺失的 Daily V2 → 刷新运行状态页。它只负责调度、运行锁、重试、超时和日志，不复制各阶段的实现。Vault 在本机，因此调度器也装在本机，而不是远端 Ubuntu。
+
+```bash
+# dry-run：只读扫描目录名生成计划，不写盘、不调用子命令、不读取正文、不调用外部 API
+python3 scripts/local_incremental_runner.py run --dry-run
+
+python3 scripts/local_incremental_runner.py run \
+  --raw-dir "$VAULT/AI/AI外置记忆/00-系统生成/原始记录/liangzai" \
+  --daily-dir "$VAULT/AI/AI外置记忆/01-日报" \
+  --status-output "$VAULT/AI/AI外置记忆/90-系统/运行状态/外置记忆运行状态.md"
+```
+
+编排规则：
+
+- 时区固定 `Asia/Shanghai`；当天只同步原始记录，当天不生成日报；
+- **先同步、再排计划**：本轮同步刚拉到的原始记录，同一轮就能进入日报计划，不必等下一次调度；
+- 所有早于今天、有原始记录但没有日报的日期都进入待补队列，**昨天优先**，其余从新到旧排队；每轮只生成
+  `PERSONAL_MEMORY_MAX_DAILY_DAYS_PER_RUN` 天（默认 3），剩下的留在「仍待处理」，下一轮继续，不会永久漏补；
+- 没有缺失日报时直接跳过生成阶段，不调用 LLM；
+- 运行锁防止两轮重叠；抢不到锁的实例只追加自己的日志后退出，**不写 `last-run.json`**，否则会把正在运行的实例状态覆盖成 `skipped`；
+- 每个阶段在独立进程组内运行，`PERSONAL_MEMORY_STAGE_TIMEOUT` 秒（默认 1800）超时后先向**整个进程组**发 `SIGTERM`、
+  短暂等待后再 `SIGKILL`，`ssh` / `scp` 这类子进程不会遗留到下一次重试；超时按失败计入重试并及时释放锁；
+- 每个阶段最多重试 `PERSONAL_MEMORY_MAX_ATTEMPTS` 次，耗尽后保留结构化日志并返回非零状态；日报失败不覆盖已有正式文件；
+- 原始记录同步失败时跳过日报生成，避免基于陈旧数据写入；
+- 结构化日志默认写入 `~/Library/Logs/personal-memory-incremental/runner.jsonl`；本轮结果用同目录临时文件加原子替换写入
+  `last-run.json`，读取方不会看到半个文件；`last_success_at` 只在成功时更新，不会被失败轮次抹掉；
+- 控制台输出、JSONL 日志和 `last-run.json` 共用同一个脱敏器：env 文件与子进程环境里键名含
+  TOKEN / SECRET / PASSWORD / API_KEY / AUTH 的值统一替换为 `***`，**成功输出同样脱敏**；
+- **运行器把解析后的 Vault 与投影目标注入同步子进程**（`PERSONAL_MEMORY_VAULT_DIR`、`PERSONAL_MEMORY_TARGET_REL`），
+  用 `--vault-dir` 覆盖时，父进程扫描的目录和子脚本写入的目录一定是同一个；
+- 环境变量优先级：命令行参数 > env 文件 > 进程环境 > 内置默认值；非法数值（尝试次数 / 每轮天数 / 重试间隔 / 超时）直接报错退出。
+
+`--dry-run` 示例输出（只读 home 下实测通过、零写入）：
+
+```text
+[=] dry-run：只读扫描目录名，不写盘、不调用子命令
+[→] 计划 2026-05-10｜原始记录 2 天｜日报 0 天｜待补 2 天｜本轮生成 1 天｜仍待处理 1 天
+[→] 本轮生成：2026-05-09
+[=] 仍待处理：2026-05-07
+[dry-run] 将执行 sync-raw: bash '.../scripts/sync_obsidian_vault.sh'
+[dry-run] 将执行 daily-v2: python3 '.../scripts/sync_daily_v2.py' --raw-dir ... --output-dir ... --date-from 2026-05-09 --date-to 2026-05-09
+[dry-run] 将执行 status-page: python3 '.../scripts/render_generation_status.py' --raw-dir ... --daily-dir ... --output .../外置记忆运行状态.md
+[summary] sync-raw=dry-run | daily-v2=dry-run | status-page=dry-run
+```
+
+配置放在独立环境文件，LaunchAgent plist 只保存该文件的路径，不保存密钥：
+
+```bash
+mkdir -p ~/.config/personal-memory
+install -m 0600 config/local-runner.env.example ~/.config/personal-memory/incremental.env
+```
+
+安装与回滚：
+
+```bash
+bash scripts/install_local_incremental_runner.sh preview           # 只打印 plist，不写盘
+bash scripts/install_local_incremental_runner.sh install --confirm # 真正注册定时任务
+bash scripts/install_local_incremental_runner.sh status
+bash scripts/install_local_incremental_runner.sh uninstall         # 回滚：bootout 并删除 plist
+```
+
+`preview` 是默认行为：不写 `~/Library/LaunchAgents`，也不启动任何任务。`install` 必须显式带 `--confirm`，可用 `--interval=N`（>=300 秒）和 `--env-file=PATH` 覆盖；默认解释器是 `/usr/bin/python3`，需要更高版本时用 `PERSONAL_MEMORY_PYTHON` 指定。卸载只移除 LaunchAgent，日志与状态目录保留以便追溯。
+
 ## 历史 Markdown 导入
 
 `scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入；过长日记可按已有章节拆成 `YYYY-MM-DD--slug.md`，仍归入同一天。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。
