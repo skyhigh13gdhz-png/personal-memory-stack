@@ -69,6 +69,8 @@ if [[ "$CONFIRM" != "1" ]]; then
   exit 2
 fi
 
-WORK_ROOT="${PERSONAL_MEMORY_REBUILD_WORK_DIR:-$HOME/Library/Application Support/personal-memory-daily-rebuild}"
+WORK_BASE="${PERSONAL_MEMORY_REBUILD_WORK_DIR:-$HOME/Library/Application Support/personal-memory-daily-rebuild}"
+WORK_ROOT="$WORK_BASE/rebuild-$(date '+%Y%m%d-%H%M%S')"
 mkdir -p "$WORK_ROOT"
+echo "[→] 本轮隔离工作目录: $WORK_ROOT"
 "${COMMAND[@]}" --work-dir "$WORK_ROOT"
