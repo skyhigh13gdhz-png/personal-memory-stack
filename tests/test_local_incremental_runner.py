@@ -4,6 +4,7 @@ import os
 import shlex
 import sys
 import tempfile
+import time
 import unittest
 from datetime import date
 from pathlib import Path
@@ -19,7 +20,7 @@ sys.modules.setdefault("local_incremental_runner", MODULE)
 SPEC.loader.exec_module(MODULE)
 
 
-FAKE_SCRIPT = '''import os, sys, time
+FAKE_SCRIPT = '''import os, sys, time, subprocess
 from pathlib import Path
 
 marker = Path(os.environ["FAKE_MARKER"])
@@ -28,13 +29,27 @@ count = int(counter.read_text()) if counter.exists() else 0
 counter.write_text(str(count + 1))
 with marker.open("a", encoding="utf-8") as handle:
     handle.write(os.environ.get("FAKE_NAME", "fake") + " " + " ".join(sys.argv[1:]) + "\\n")
+
+child_pid_file = os.environ.get("FAKE_CHILD_PID")
+if child_pid_file:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    Path(child_pid_file).write_text(str(child.pid))
+
 if count == 0:
     time.sleep(float(os.environ.get("FAKE_FIRST_SLEEP", "0")))
 if count < int(os.environ.get("FAKE_FAIL_TIMES", "0")):
     sys.stderr.write(os.environ.get("FAKE_ERROR_TEXT", "fake failure") + "\\n")
     raise SystemExit(1)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
-sys.stdout.write("fake ok\\n")
+
+token = os.environ.get("GATEWAY_API_TOKEN", "")
+if token:
+    sys.stdout.write("token=" + token + "\\n")
+for key in [item for item in os.environ.get("FAKE_LEAK_KEYS", "").split(",") if item]:
+    value = os.environ.get(key)
+    if value:
+        sys.stdout.write(key + "=" + value + "\\n")
+sys.stdout.write(os.environ.get("FAKE_SUCCESS_TEXT", "fake ok") + "\\n")
 '''
 
 
@@ -56,7 +71,10 @@ class _RunnerHarness:
         self.addCleanup(self.temporary.cleanup)
 
     # -- helpers ---------------------------------------------------------
-    def fake_command(self, name, fail_times=0, sleep=0.0, first_sleep=0.0, error_text=""):
+    def fake_command(
+        self, name, fail_times=0, sleep=0.0, first_sleep=0.0, error_text="",
+        success_text="", child_pid_file=None, leak_keys=(),
+    ):
         stub = self.root / f"fake-{name}.py"
         stub.write_text(FAKE_SCRIPT, encoding="utf-8")
         counter = self.root / f"counter-{name}.txt"
@@ -68,7 +86,11 @@ class _RunnerHarness:
             "FAKE_SLEEP": str(sleep),
             "FAKE_FIRST_SLEEP": str(first_sleep),
             "FAKE_ERROR_TEXT": error_text,
+            "FAKE_SUCCESS_TEXT": success_text,
+            "FAKE_LEAK_KEYS": ",".join(leak_keys),
         }
+        if child_pid_file is not None:
+            env["FAKE_CHILD_PID"] = str(child_pid_file)
         prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
         return ["/bin/sh", "-c", f"{prefix} exec python3 {shlex.quote(str(stub))}"]
 
@@ -86,6 +108,7 @@ class _RunnerHarness:
             "raw_dir": self.raw_dir,
             "daily_dir": self.daily_dir,
             "status_output": self.vault / "运行状态.md",
+            "vault_dir": self.vault,
             "work_dir": self.work_dir,
             "today": date(2026, 5, 10),
             "max_daily_days_per_run": 3,
@@ -117,6 +140,18 @@ class _RunnerHarness:
 
     def last_run(self):
         return json.loads((self.state_dir / "last-run.json").read_text(encoding="utf-8"))
+
+    def wait_pid_gone(self, pid, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                pass
+            time.sleep(0.05)
+        return False
 
 
 class RunnerTestCase(_RunnerHarness, unittest.TestCase):
@@ -231,7 +266,8 @@ class RunnerTestCase(_RunnerHarness, unittest.TestCase):
         daily.mkdir(parents=True)
         (raw / "2026-05-09.md").write_text("# 2026-05-09\n", encoding="utf-8")
         config = self.build_config(
-            raw_dir=raw, daily_dir=daily, status_output=vault / "运行状态.md"
+            raw_dir=raw, daily_dir=daily, status_output=vault / "运行状态.md",
+            vault_dir=vault,
         )
         code, _, _ = self.run_runner(config)
         self.assertEqual(code, 0)
@@ -561,6 +597,318 @@ class R6StageTimeoutTests(_RunnerHarness, unittest.TestCase):
         with mock.patch.dict(os.environ, {"PERSONAL_MEMORY_STAGE_TIMEOUT": "99"}):
             config = MODULE.config_from_args(MODULE.build_parser().parse_args(["run"]))
         self.assertEqual(config.stage_timeout, 99.0)
+
+
+# --------------------------------------------------------------------------
+# WB-01R second round regression tests
+# --------------------------------------------------------------------------
+
+
+class R7ChildStageVaultTests(_RunnerHarness, unittest.TestCase):
+    """R7: the resolved Vault must reach the sync child stage."""
+
+    def config_from_cli(self, argv):
+        return MODULE.config_from_args(MODULE.build_parser().parse_args(argv))
+
+    def child_env_for(self, config):
+        runner = MODULE.Runner(config, emit=lambda _line: None)
+        return runner.child_env()
+
+    def test_cli_vault_is_injected_into_child_env(self):
+        vault = self.root / "cli-vault"
+        config = self.config_from_cli(["run", "--vault-dir", str(vault)])
+        env = self.child_env_for(config)
+        self.assertEqual(env["PERSONAL_MEMORY_VAULT_DIR"], str(vault))
+        self.assertEqual(env["PERSONAL_MEMORY_TARGET_REL"], MODULE.DEFAULT_RAW_REL)
+
+    def test_env_file_vault_is_injected_into_child_env(self):
+        vault = self.root / "env-vault"
+        env_file = self.root / "runner.env"
+        env_file.write_text(f"PERSONAL_MEMORY_VAULT_DIR={vault}\n", encoding="utf-8")
+        env_file.chmod(0o600)
+        config = self.config_from_cli(["run", "--env-file", str(env_file)])
+        env = self.child_env_for(config)
+        self.assertEqual(env["PERSONAL_MEMORY_VAULT_DIR"], str(vault))
+
+    def test_cli_vault_beats_stale_process_environment(self):
+        vault = self.root / "cli-vault"
+        with mock.patch.dict(os.environ, {"PERSONAL_MEMORY_VAULT_DIR": "/tmp/stale-vault"}):
+            config = self.config_from_cli(["run", "--vault-dir", str(vault)])
+            env = self.child_env_for(config)
+        self.assertEqual(env["PERSONAL_MEMORY_VAULT_DIR"], str(vault))
+
+    def test_target_rel_follows_explicit_raw_dir(self):
+        vault = self.root / "cli-vault"
+        raw = vault / "自定义" / "raw"
+        config = self.config_from_cli(
+            ["run", "--vault-dir", str(vault), "--raw-dir", str(raw)]
+        )
+        env = self.child_env_for(config)
+        self.assertEqual(env["PERSONAL_MEMORY_TARGET_REL"], "自定义/raw")
+
+    def test_env_file_target_rel_wins(self):
+        vault = self.root / "cli-vault"
+        env_file = self.root / "runner.env"
+        env_file.write_text(
+            f"PERSONAL_MEMORY_VAULT_DIR={vault}\nPERSONAL_MEMORY_TARGET_REL=custom/target\n",
+            encoding="utf-8",
+        )
+        env_file.chmod(0o600)
+        config = self.config_from_cli(["run", "--env-file", str(env_file)])
+        env = self.child_env_for(config)
+        self.assertEqual(env["PERSONAL_MEMORY_TARGET_REL"], "custom/target")
+
+    def test_sync_child_receives_the_cli_vault_end_to_end(self):
+        """The stage that actually runs must see the overridden Vault."""
+        vault = self.root / "cli-vault"
+        raw = vault / MODULE.DEFAULT_RAW_REL
+        daily = vault / MODULE.DEFAULT_DAILY_REL
+        raw.mkdir(parents=True)
+        daily.mkdir(parents=True)
+        (raw / "2026-05-09.md").write_text("# 2026-05-09\n", encoding="utf-8")
+        argv = [
+            "run", "--vault-dir", str(vault), "--today", "2026-05-10",
+            "--state-dir", str(self.state_dir), "--log-file", str(self.log_file),
+            # the stub prints only these two variables, not the whole env
+            "--sync-command", shlex.join(self.fake_command(
+                "sync",
+                leak_keys=["PERSONAL_MEMORY_VAULT_DIR", "PERSONAL_MEMORY_TARGET_REL"],
+            )),
+            "--daily-command", shlex.join(self.fake_command("daily")),
+            "--status-command", shlex.join(self.fake_command("status")),
+        ]
+        config = self.config_from_cli(argv)
+        code, lines, _ = self.run_runner(config)
+        self.assertEqual(code, 0)
+        self.assertTrue(
+            any(f"PERSONAL_MEMORY_VAULT_DIR={vault}" in line for line in lines),
+            "同步子进程没有收到 CLI 指定的 Vault",
+        )
+        self.assertTrue(
+            any(
+                f"PERSONAL_MEMORY_TARGET_REL={MODULE.DEFAULT_RAW_REL}" in line
+                for line in lines
+            ),
+            "同步子进程没有收到投影目标相对路径",
+        )
+        self.assertIn("daily", self.called_stages())
+
+
+class R8LockedInstanceStateTests(_RunnerHarness, unittest.TestCase):
+    """R8: a losing instance must not overwrite shared state."""
+
+    def hold_lock_and_run(self, config):
+        config.lock_path().parent.mkdir(parents=True, exist_ok=True)
+        with MODULE.acquire_lock(config.lock_path()):
+            return self.run_runner(config)
+
+    def test_locked_instance_leaves_last_run_bytes_untouched(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config()
+        MODULE.atomic_write_json(
+            config.last_run_path(), {"outcome": "ok", "owner": "running-instance"}
+        )
+        before = config.last_run_path().read_bytes()
+        code, lines, runner = self.hold_lock_and_run(config)
+        self.assertEqual(code, 0)
+        self.assertEqual(config.last_run_path().read_bytes(), before)
+        self.assertEqual(self.marker_calls(), [])
+        self.assertEqual(runner.records[-1]["outcome"], "skipped")
+        self.assertTrue(any("skipped" in line for line in lines))
+
+    def test_locked_instance_still_appends_its_own_jsonl_record(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config()
+        self.hold_lock_and_run(config)
+        records = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines() if line
+        ]
+        self.assertTrue(any(item["outcome"] == "skipped" for item in records))
+
+    def test_last_run_is_published_atomically(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        code, _, _ = self.run_runner(self.build_config())
+        self.assertEqual(code, 0)
+        leftovers = [p.name for p in self.state_dir.iterdir() if p.name.endswith(".tmp")]
+        self.assertEqual(leftovers, [], "临时文件必须在发布后消失")
+        self.assertEqual(self.last_run()["outcome"], "ok")
+
+    def test_failed_publish_keeps_previous_state(self):
+        path = self.state_dir / "last-run.json"
+        MODULE.atomic_write_json(path, {"outcome": "ok", "owner": "previous"})
+        before = path.read_bytes()
+        with mock.patch.object(MODULE.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaises(OSError):
+                MODULE.atomic_write_json(path, {"outcome": "failed"})
+        self.assertEqual(path.read_bytes(), before)
+
+
+class R9ProcessGroupTests(_RunnerHarness, unittest.TestCase):
+    """R9: a stage timeout must terminate the whole process group."""
+
+    def test_timeout_reaps_direct_child_and_grandchild(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        pid_file = self.root / "grandchild.pid"
+        config = self.build_config(
+            # The stage is a shell-like parent that spawns a long child and
+            # then keeps running, like sync_obsidian_vault.sh does with ssh.
+            daily_command=self.fake_command(
+                "daily", sleep=600, child_pid_file=pid_file
+            ),
+            stage_timeout=1.0, max_attempts=1,
+        )
+        code, _, runner = self.run_runner(config)
+        self.assertEqual(code, MODULE.EXIT_FAILED)
+        self.assertTrue(pid_file.exists(), "孙进程没有被创建，测试无效")
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        self.assertTrue(self.wait_pid_gone(pid), f"孙进程 {pid} 在超时后仍然存活")
+        self.assertTrue(any(item["outcome"] == "timeout" for item in runner.records))
+
+    def test_grandchild_is_reaped_when_the_leader_exits_first(self):
+        """The direct child can exit while its ssh/scp grandchild stays.
+
+        Asking for the group id at kill time would fail here, so the runner
+        records it right after spawning the stage.
+        """
+        self.write_day(self.raw_dir, "2026-05-09")
+        pid_file = self.root / "grandchild-leaderless.pid"
+        config = self.build_config(
+            # spawns a six-hundred second sleeper, then exits immediately
+            daily_command=self.fake_command("daily", child_pid_file=pid_file),
+            stage_timeout=1.0, max_attempts=1,
+        )
+        code, _, _ = self.run_runner(config)
+        self.assertTrue(pid_file.exists(), "孙进程没有被创建，测试无效")
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        self.assertTrue(self.wait_pid_gone(pid), f"孙进程 {pid} 在组长退出后仍然存活")
+        self.assertEqual(code, MODULE.EXIT_FAILED)
+
+    def test_timeout_does_not_leave_a_hung_pipe(self):
+        """A grandchild holding stdout must not block the runner forever."""
+        self.write_day(self.raw_dir, "2026-05-09")
+        pid_file = self.root / "grandchild-2.pid"
+        config = self.build_config(
+            daily_command=self.fake_command(
+                "daily", sleep=600, child_pid_file=pid_file
+            ),
+            stage_timeout=1.0, max_attempts=1,
+        )
+        started = time.monotonic()
+        code, _, _ = self.run_runner(config)
+        elapsed = time.monotonic() - started
+        self.assertEqual(code, MODULE.EXIT_FAILED)
+        self.assertLess(elapsed, 15.0, "运行器没有在超时后及时返回")
+
+    def test_timeout_is_reported_as_timeout_not_plain_failure(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config(
+            daily_command=self.fake_command("daily", sleep=3),
+            stage_timeout=0.3, max_attempts=1,
+        )
+        code, _, _ = self.run_runner(config)
+        self.assertEqual(code, MODULE.EXIT_FAILED)
+        payload = self.last_run()
+        daily = [item for item in payload["stages"] if item["name"] == "daily-v2"][0]
+        self.assertEqual(daily["outcome"], "timeout")
+        self.assertIn("timeout", MODULE.render_status(config))
+
+
+class R10RedactionTests(_RunnerHarness, unittest.TestCase):
+    """R10: every output path must be redacted, success included."""
+
+    def test_successful_stdout_is_redacted_everywhere(self):
+        env_file = self.root / "runner.env"
+        env_file.write_text('GATEWAY_API_TOKEN="super-secret-token"\n', encoding="utf-8")
+        env_file.chmod(0o600)
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config(env_file=env_file)
+        code, lines, _ = self.run_runner(config)
+        self.assertEqual(code, 0)
+        console = "\n".join(lines)
+        self.assertIn("token=***", console)
+        self.assertNotIn("super-secret-token", console)
+        self.assertNotIn(
+            "super-secret-token", self.log_file.read_text(encoding="utf-8")
+        )
+        self.assertNotIn(
+            "super-secret-token",
+            (self.state_dir / "last-run.json").read_text(encoding="utf-8"),
+        )
+
+    def test_process_environment_secret_is_redacted(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        with mock.patch.dict(os.environ, {"DEPLOY_API_TOKEN": "env-credential-42"}):
+            config = self.build_config(
+                daily_command=self.fake_command("daily", leak_keys=["DEPLOY_API_TOKEN"])
+            )
+            code, lines, _ = self.run_runner(config)
+        self.assertEqual(code, 0)
+        console = "\n".join(lines)
+        self.assertIn("DEPLOY_API_TOKEN=***", console)
+        self.assertNotIn("env-credential-42", console)
+
+    def test_extra_env_secret_is_redacted(self):
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config(
+            extra_env={"SERVICE_PASSWORD": "p@ssw0rd-value"},
+            daily_command=self.fake_command("daily", leak_keys=["SERVICE_PASSWORD"]),
+        )
+        code, lines, _ = self.run_runner(config)
+        self.assertEqual(code, 0)
+        console = "\n".join(lines)
+        self.assertIn("SERVICE_PASSWORD=***", console)
+        self.assertNotIn("p@ssw0rd-value", console)
+
+    def test_timeout_detail_is_redacted(self):
+        env_file = self.root / "runner.env"
+        env_file.write_text('GATEWAY_API_TOKEN="super-secret-token"\n', encoding="utf-8")
+        env_file.chmod(0o600)
+        self.write_day(self.raw_dir, "2026-05-09")
+        config = self.build_config(
+            env_file=env_file,
+            daily_command=self.fake_command(
+                "daily", sleep=3, error_text="leak super-secret-token"
+            ),
+            stage_timeout=0.3, max_attempts=1,
+        )
+        _, lines, runner = self.run_runner(config)
+        self.assertNotIn("super-secret-token", "\n".join(lines))
+        self.assertNotIn(
+            "super-secret-token", json.dumps(runner.records, ensure_ascii=False)
+        )
+
+
+class ConfigValidationTests(unittest.TestCase):
+    """Suggested follow-up: bad limits must fail fast, not ambiguously."""
+
+    def build(self, **overrides):
+        options = {
+            "raw_dir": Path("/tmp/raw"),
+            "daily_dir": Path("/tmp/daily"),
+            "status_output": Path("/tmp/status.md"),
+        }
+        options.update(overrides)
+        return MODULE.RunnerConfig(**options)
+
+    def test_invalid_limits_are_rejected(self):
+        cases = [
+            ({"max_attempts": 0}, "max_attempts"),
+            ({"max_daily_days_per_run": 0}, "max_daily_days_per_run"),
+            ({"retry_delay": -1}, "retry_delay"),
+            ({"stage_timeout": 0}, "stage_timeout"),
+        ]
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(MODULE.ConfigError) as context:
+                    MODULE.validate_config(self.build(**overrides))
+                self.assertIn(expected, str(context.exception))
+
+    def test_run_rejects_invalid_config(self):
+        config = self.build(max_attempts=0, sync_command=["/bin/true"])
+        runner = MODULE.Runner(config, emit=lambda _line: None)
+        with self.assertRaises(MODULE.ConfigError):
+            runner.run()
 
 
 if __name__ == "__main__":

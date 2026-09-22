@@ -119,13 +119,18 @@ python3 scripts/local_incremental_runner.py run \
 - 所有早于今天、有原始记录但没有日报的日期都进入待补队列，**昨天优先**，其余从新到旧排队；每轮只生成
   `PERSONAL_MEMORY_MAX_DAILY_DAYS_PER_RUN` 天（默认 3），剩下的留在「仍待处理」，下一轮继续，不会永久漏补；
 - 没有缺失日报时直接跳过生成阶段，不调用 LLM；
-- 运行锁防止两轮重叠，第二个实例记录 `skipped` 后直接退出，不重复写入；
-- 每个阶段有 `PERSONAL_MEMORY_STAGE_TIMEOUT` 秒超时（默认 1800），超时按失败计入重试，避免 SSH 或 LLM 挂起时长期占锁；
+- 运行锁防止两轮重叠；抢不到锁的实例只追加自己的日志后退出，**不写 `last-run.json`**，否则会把正在运行的实例状态覆盖成 `skipped`；
+- 每个阶段在独立进程组内运行，`PERSONAL_MEMORY_STAGE_TIMEOUT` 秒（默认 1800）超时后先向**整个进程组**发 `SIGTERM`、
+  短暂等待后再 `SIGKILL`，`ssh` / `scp` 这类子进程不会遗留到下一次重试；超时按失败计入重试并及时释放锁；
 - 每个阶段最多重试 `PERSONAL_MEMORY_MAX_ATTEMPTS` 次，耗尽后保留结构化日志并返回非零状态；日报失败不覆盖已有正式文件；
 - 原始记录同步失败时跳过日报生成，避免基于陈旧数据写入；
-- 结构化日志默认写入 `~/Library/Logs/personal-memory-incremental/runner.jsonl`，本轮结果写入 `last-run.json`，其中
-  `last_success_at` 只在成功时更新，不会被失败轮次抹掉；
-- 环境变量优先级：命令行参数 > env 文件 > 进程环境 > 内置默认值。env 文件同时配置运行器自身和子脚本，两者看到的是同一个 Vault。
+- 结构化日志默认写入 `~/Library/Logs/personal-memory-incremental/runner.jsonl`；本轮结果用同目录临时文件加原子替换写入
+  `last-run.json`，读取方不会看到半个文件；`last_success_at` 只在成功时更新，不会被失败轮次抹掉；
+- 控制台输出、JSONL 日志和 `last-run.json` 共用同一个脱敏器：env 文件与子进程环境里键名含
+  TOKEN / SECRET / PASSWORD / API_KEY / AUTH 的值统一替换为 `***`，**成功输出同样脱敏**；
+- **运行器把解析后的 Vault 与投影目标注入同步子进程**（`PERSONAL_MEMORY_VAULT_DIR`、`PERSONAL_MEMORY_TARGET_REL`），
+  用 `--vault-dir` 覆盖时，父进程扫描的目录和子脚本写入的目录一定是同一个；
+- 环境变量优先级：命令行参数 > env 文件 > 进程环境 > 内置默认值；非法数值（尝试次数 / 每轮天数 / 重试间隔 / 超时）直接报错退出。
 
 `--dry-run` 示例输出（只读 home 下实测通过、零写入）：
 

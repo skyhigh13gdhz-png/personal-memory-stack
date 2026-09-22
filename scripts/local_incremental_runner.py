@@ -8,6 +8,10 @@ and a non-zero failure status.
 
 It never reimplements what `sync_obsidian_vault.sh`, `sync_daily_v2.py` and
 `render_generation_status.py` already do -- it calls them.
+
+One resolved Vault/path configuration is shared by the parent process and
+every child stage, stage timeouts terminate whole process groups, and every
+byte the runner shows or persists goes through the same redactor.
 """
 
 from __future__ import annotations
@@ -19,13 +23,14 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 try:  # pragma: no cover - depends on the host tz database
     from zoneinfo import ZoneInfo
@@ -42,6 +47,14 @@ DEFAULT_STATUS_REL = "AI/AI外置记忆/90-系统/运行状态/外置记忆运�
 RUNNER_LABEL = "personal-memory-incremental"
 DATE_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 SECRET_KEY_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "API_KEY", "AUTH")
+# Names that match a marker but never carry a credential.
+SECRET_KEY_EXCLUSIONS = ("SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS")
+MIN_SECRET_LENGTH = 4
+# How long a timed-out stage group may live after SIGTERM before SIGKILL.
+TIMEOUT_GRACE_SECONDS = 5.0
+# How long to wait for the direct child to exit before the SIGKILL sweep.
+TERMINATION_WAIT_SECONDS = 2.0
+TERMINATION_POLL_SECONDS = 0.05
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 EXIT_OK = 0
@@ -50,6 +63,20 @@ EXIT_FAILED = 2
 
 class LockUnavailable(Exception):
     """Another runner instance already holds the overlap lock."""
+
+
+class ConfigError(Exception):
+    """The resolved configuration cannot be run safely."""
+
+
+class StageTimeout(Exception):
+    """A stage exceeded its timeout and its process group was terminated."""
+
+    def __init__(self, timeout: float, stdout: str = "", stderr: str = "") -> None:
+        super().__init__(f"timeout after {timeout:g}s")
+        self.timeout = timeout
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 # --------------------------------------------------------------------------
@@ -62,6 +89,9 @@ class RunnerConfig:
     raw_dir: Path
     daily_dir: Path
     status_output: Path
+    # The single resolved Vault, also handed to the sync child stage.
+    vault_dir: Path | None = None
+    target_rel: str | None = None
     work_dir: Path | None = None
     timezone: str = DEFAULT_TIMEZONE
     today: date | None = None
@@ -90,6 +120,42 @@ class RunnerConfig:
     def last_run_path(self) -> Path:
         root = self.state_dir or default_state_dir()
         return root / "last-run.json"
+
+    def resolved_vault_dir(self) -> Path | None:
+        """The one Vault both this process and the sync child stage use."""
+        if self.vault_dir is not None:
+            return self.vault_dir
+        # Fall back to reversing the default projection layout, so callers
+        # that build the config directly still hand the child a Vault.
+        suffix = Path(DEFAULT_RAW_REL).parts
+        parts = self.raw_dir.parts
+        if len(parts) > len(suffix) and tuple(parts[-len(suffix):]) == suffix:
+            return Path(*parts[: -len(suffix)])
+        return None
+
+    def resolved_target_rel(self, vault: Path) -> str:
+        """Projection target relative to `vault`, as the sync stage expects."""
+        if self.target_rel:
+            return self.target_rel
+        try:
+            return self.raw_dir.relative_to(vault).as_posix()
+        except ValueError:
+            return DEFAULT_RAW_REL
+
+
+def validate_config(config: RunnerConfig) -> None:
+    """Reject values that would otherwise fail in a confusing way."""
+    problems: list[str] = []
+    if config.max_attempts < 1:
+        problems.append("max_attempts 必须 >= 1")
+    if config.max_daily_days_per_run < 1:
+        problems.append("max_daily_days_per_run 必须 >= 1")
+    if config.retry_delay < 0:
+        problems.append("retry_delay 必须 >= 0")
+    if config.stage_timeout <= 0:
+        problems.append("stage_timeout 必须 > 0")
+    if problems:
+        raise ConfigError("；".join(problems))
 
 
 def default_state_dir() -> Path:
@@ -134,14 +200,16 @@ def load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def secret_values(values: dict[str, str]) -> list[str]:
+def looks_secret(key: str) -> bool:
+    upper = key.upper()
+    if upper in SECRET_KEY_EXCLUSIONS:
+        return False
+    return any(marker in upper for marker in SECRET_KEY_MARKERS)
+
+
+def secret_values(values: Mapping[str, str]) -> list[str]:
     """Values whose key looks like a credential, so logs can mask them."""
-    found = []
-    for key, value in values.items():
-        upper = key.upper()
-        if any(marker in upper for marker in SECRET_KEY_MARKERS) and value:
-            found.append(value)
-    return found
+    return [value for key, value in values.items() if value and looks_secret(key)]
 
 
 def env_file_permission_warning(path: Path) -> str | None:
@@ -152,6 +220,26 @@ def env_file_permission_warning(path: Path) -> str | None:
     if mode & 0o077:
         return "env file is readable by group or others; chmod 600 recommended"
     return None
+
+
+class Redactor:
+    """One redactor for console output, JSONL records and persisted state."""
+
+    def __init__(self, values: Iterable[str] = ()) -> None:
+        self._secrets: list[str] = []
+        self.absorb(values)
+
+    def absorb(self, values: Iterable[str]) -> None:
+        for value in values:
+            if not value or len(value) < MIN_SECRET_LENGTH:
+                continue
+            if value not in self._secrets:
+                self._secrets.append(value)
+
+    def __call__(self, text: str) -> str:
+        for value in self._secrets:
+            text = text.replace(value, "***")
+        return text
 
 
 # --------------------------------------------------------------------------
@@ -237,7 +325,114 @@ def build_sync_command() -> list[str]:
 
 
 # --------------------------------------------------------------------------
-# lock and logging
+# process handling
+# --------------------------------------------------------------------------
+
+
+def signal_process_group(pgid: int, sig: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(pgid, sig)
+
+
+def process_group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def stage_process_group(process: "subprocess.Popen[str]") -> int | None:
+    """Record the stage's group id while the leader is still alive.
+
+    Asking for it later is too late: if the direct child already exited,
+    `os.getpgid` fails and a surviving ssh/scp grandchild would never be
+    signalled. `start_new_session` guarantees the leader is the group leader,
+    and the id cannot be recycled while any member is still alive.
+    """
+    if os.name != "posix":  # pragma: no cover - the target host is macOS
+        return None
+    try:
+        return os.getpgid(process.pid)
+    except OSError:
+        return process.pid
+
+
+def terminate_process_group(
+    process: "subprocess.Popen[str]", grace: float, pgid: int | None = None
+) -> None:
+    """Terminate the whole stage group: a plain kill leaves ssh/scp behind.
+
+    `sync_obsidian_vault.sh` is Bash that starts ssh and scp; killing only the
+    direct child would leave those network children running into the retry.
+    """
+    if os.name != "posix":  # pragma: no cover - the target host is macOS
+        process.kill()
+        with contextlib.suppress(Exception):
+            process.wait(timeout=grace)
+        return
+    if pgid is None:
+        pgid = stage_process_group(process)
+    if pgid is None:  # pragma: no cover - non-posix only
+        with contextlib.suppress(Exception):
+            process.wait(timeout=grace)
+        return
+
+    # 1. Ask the whole group to stop, not just the direct child.
+    signal_process_group(pgid, signal.SIGTERM)
+
+    # 2. Reap the direct child before probing: an unreaped zombie keeps
+    #    answering `killpg(pgid, 0)`, which would make the group look alive
+    #    for the whole grace period even when nothing is running.
+    try:
+        process.wait(timeout=min(grace, TERMINATION_WAIT_SECONDS))
+    except subprocess.TimeoutExpired:
+        pass
+
+    # 3. Whatever ignored SIGTERM inside the group is forced down.
+    if process_group_alive(pgid):
+        signal_process_group(pgid, signal.SIGKILL)
+        deadline = time.monotonic() + grace
+        while process_group_alive(pgid) and time.monotonic() < deadline:
+            time.sleep(TERMINATION_POLL_SECONDS)
+        with contextlib.suppress(Exception):
+            process.wait(timeout=grace)
+
+
+def run_process(
+    command: list[str],
+    env: Mapping[str, str],
+    timeout: float,
+    grace: float = TIMEOUT_GRACE_SECONDS,
+) -> tuple[int, str, str]:
+    """Run a stage in its own session; on timeout kill the whole group."""
+    options: dict[str, Any] = {
+        "env": dict(env),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if os.name == "posix":
+        # A new session means the stage owns a process group we can signal.
+        options["start_new_session"] = True
+    process = subprocess.Popen(command, **options)  # type: ignore[arg-type]
+    pgid = stage_process_group(process)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        terminate_process_group(process, grace, pgid)
+        # Collect whatever the stage managed to write before it died. This
+        # only returns once every writer of the pipe is gone, so it doubles
+        # as proof that no grandchild survived.
+        stdout, stderr = process.communicate()
+        raise StageTimeout(timeout, stdout or "", stderr or "") from None
+    return process.returncode, stdout or "", stderr or ""
+
+
+# --------------------------------------------------------------------------
+# lock and state
 # --------------------------------------------------------------------------
 
 
@@ -259,10 +454,24 @@ def acquire_lock(path: Path) -> Iterator[int]:
         os.close(fd)
 
 
+def atomic_write_json(path: Path, payload: Any) -> None:
+    """Publish state atomically so a concurrent reader never sees a half file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    fd = os.open(temporary, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(temporary, path)
+
+
 @dataclass
 class StageResult:
     name: str
-    outcome: str  # ok | failed | skipped | dry-run
+    outcome: str  # ok | failed | timeout | skipped | dry-run
     attempts: int = 0
     detail: str = ""
 
@@ -279,16 +488,15 @@ class Runner:
         self.sleep = sleep
         self.log_file = config.log_file or default_log_file()
         self.records: list[dict[str, Any]] = []
-        self.secrets: list[str] = []
+        self.redactor = Redactor()
         if config.env_file is not None and config.env_file.exists():
-            self.secrets = secret_values(load_env_file(config.env_file))
+            self.redactor.absorb(secret_values(load_env_file(config.env_file)))
+        # Whatever is actually handed to the children must be masked too.
+        self.redactor.absorb(secret_values(config.extra_env))
 
     # -- helpers ---------------------------------------------------------
     def redact(self, text: str) -> str:
-        for value in self.secrets:
-            if len(value) >= 4:
-                text = text.replace(value, "***")
-        return text
+        return self.redactor(text)
 
     def log(self, stage: str, outcome: str, **detail: Any) -> None:
         safe_detail = {
@@ -312,10 +520,21 @@ class Runner:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def child_env(self) -> dict[str, str]:
+        """The single resolved Vault/path configuration, handed to children.
+
+        `sync_obsidian_vault.sh` reads `PERSONAL_MEMORY_VAULT_DIR` and
+        `PERSONAL_MEMORY_TARGET_REL`; without this a `--vault-dir` override
+        would sync one Vault while the runner scans another.
+        """
         env = os.environ.copy()
         env.update(self.config.extra_env)
         if self.config.env_file is not None and self.config.env_file.exists():
             env.update(load_env_file(self.config.env_file))
+        vault = self.config.resolved_vault_dir()
+        if vault is not None:
+            env["PERSONAL_MEMORY_VAULT_DIR"] = str(vault)
+            env["PERSONAL_MEMORY_TARGET_REL"] = self.config.resolved_target_rel(vault)
+        self.redactor.absorb(secret_values(env))
         return env
 
     def run_stage(self, name: str, command: list[str]) -> StageResult:
@@ -324,40 +543,56 @@ class Runner:
             self.log(name, "dry-run", command=command)
             return StageResult(name, "dry-run")
         env = self.child_env()
+        attempts = self.config.max_attempts
         last_detail = ""
-        for attempt in range(1, self.config.max_attempts + 1):
-            self.emit(f"[→] {name}（第 {attempt}/{self.config.max_attempts} 次）")
+        last_kind = "failed"
+        for attempt in range(1, attempts + 1):
+            self.emit(f"[→] {name}（第 {attempt}/{attempts} 次）")
             try:
-                completed = subprocess.run(
-                    command, env=env, capture_output=True, text=True,
-                    check=False, timeout=self.config.stage_timeout,
+                returncode, stdout, stderr = run_process(
+                    command, env, self.config.stage_timeout
                 )
-            except subprocess.TimeoutExpired:
-                last_detail = f"timeout after {self.config.stage_timeout}s"
+            except StageTimeout as exc:
+                last_kind = "timeout"
+                last_detail = str(exc)
+                if exc.stderr.strip():
+                    last_detail += f"；stderr 尾行：{exc.stderr.strip().splitlines()[-1]}"
+                last_detail = self.redact(last_detail)
                 self.emit(f"[!] {name} 超时：{last_detail}")
                 self.log(name, "timeout", attempt=attempt, detail=last_detail)
-                if attempt < self.config.max_attempts:
+                if attempt < attempts:
                     self.sleep(self.config.retry_delay)
                 continue
             except OSError as exc:
-                completed = None
-                last_detail = f"{type(exc).__name__}: {exc}"
-            if completed is not None and completed.returncode == 0:
-                for line in completed.stdout.strip().splitlines():
-                    self.emit(f"    {line}")
+                last_kind = "failed"
+                last_detail = self.redact(f"{type(exc).__name__}: {exc}")
+                self.emit(f"[!] {name} 无法执行：{last_detail}")
+                self.log(name, "retry", attempt=attempt, detail=last_detail)
+                if attempt < attempts:
+                    self.sleep(self.config.retry_delay)
+                continue
+
+            if returncode == 0:
+                for line in stdout.strip().splitlines():
+                    self.emit(f"    {self.redact(line)}")
                 self.log(name, "ok", attempt=attempt)
                 self.emit(f"[✓] {name} 完成")
                 return StageResult(name, "ok", attempt)
-            if completed is not None:
-                tail = (completed.stderr or completed.stdout or "").strip().splitlines()
-                last_detail = tail[-1] if tail else f"exit={completed.returncode}"
-                self.emit(f"[!] {name} 失败：{self.redact(last_detail)}")
+
+            last_kind = "failed"
+            tail = (stderr or stdout or "").strip().splitlines()
+            last_detail = self.redact(tail[-1] if tail else f"exit={returncode}")
+            self.emit(f"[!] {name} 失败：{last_detail}")
             self.log(name, "retry", attempt=attempt, detail=last_detail)
-            if attempt < self.config.max_attempts:
+            if attempt < attempts:
                 self.sleep(self.config.retry_delay)
-        self.log(name, "failed", attempts=self.config.max_attempts, detail=last_detail)
-        self.emit(f"[✗] {name} 重试 {self.config.max_attempts} 次后仍失败")
-        return StageResult(name, "failed", self.config.max_attempts, str(last_detail))
+
+        self.log(name, "failed", attempts=attempts, detail=last_detail)
+        if last_kind == "timeout":
+            self.emit(f"[✗] {name} 重试 {attempts} 次后仍超时")
+        else:
+            self.emit(f"[✗] {name} 重试 {attempts} 次后仍失败")
+        return StageResult(name, last_kind, attempts, last_detail)
 
     def emit_plan(self, plan: dict[str, Any]) -> None:
         self.emit(
@@ -391,6 +626,7 @@ class Runner:
     # -- main ------------------------------------------------------------
     def run(self) -> int:
         config = self.config
+        validate_config(config)
         today = config.resolved_today()
         results: list[StageResult] = []
         if config.dry_run:
@@ -421,7 +657,7 @@ class Runner:
                 results.append(self.run_stage(
                     "sync-raw", config.sync_command or build_sync_command()
                 ))
-                sync_failed = results[-1].outcome == "failed"
+                sync_failed = results[-1].outcome in ("failed", "timeout")
                 # Re-plan after sync so this round sees records that just arrived.
                 plan = self.make_plan(today)
                 self.emit_plan(plan)
@@ -443,14 +679,15 @@ class Runner:
                     self.log("daily-v2", "skipped", detail="no missing dates")
                 results.append(self.run_stage("status-page", self.status_command_for()))
         except LockUnavailable as exc:
+            # A losing instance must not publish shared state: the winning
+            # instance still owns last-run.json for this round.
             self.emit(f"[=] 已有运行实例持有锁，本轮跳过：{exc}")
             self.log("lock", "skipped", detail=str(exc))
-            return self.finish(
-                {"today": today.isoformat(), "missing": [], "selected": [], "pending": []},
-                [], "skipped", EXIT_OK,
-            )
+            self.log("run", "skipped", detail="another instance holds the lock")
+            self.emit(f"[summary] run=skipped（已有实例在跑）")
+            return EXIT_OK
 
-        failed = [item for item in results if item.outcome == "failed"]
+        failed = [item for item in results if item.outcome in ("failed", "timeout")]
         outcome = "failed" if failed else "ok"
         self.emit("[summary] " + " | ".join(
             f"{item.name}={item.outcome}" for item in results
@@ -464,7 +701,6 @@ class Runner:
             self.log("run", outcome)
             return code
         state_dir = self.config.state_dir or default_state_dir()
-        state_dir.mkdir(parents=True, exist_ok=True)
         last_run_path = state_dir / "last-run.json"
         last_success_at = None
         if last_run_path.exists():
@@ -484,13 +720,11 @@ class Runner:
             "plan": plan,
             "stages": [
                 {"name": item.name, "outcome": item.outcome, "attempts": item.attempts,
-                 "detail": item.detail}
+                 "detail": self.redact(item.detail)}
                 for item in results
             ],
         }
-        last_run_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        atomic_write_json(last_run_path, payload)
         self.log("run", outcome)
         return code
 
@@ -521,7 +755,10 @@ def render_status(config: RunnerConfig) -> str:
         ])
         for stage in payload.get("stages", []):
             extra = f"（{stage['attempts']} 次尝试）" if stage.get("attempts") else ""
-            lines.append(f"- {stage['name']}：{stage['outcome']}{extra}")
+            note = ""
+            if stage.get("outcome") == "timeout":
+                note = f"｜原因：{stage.get('detail') or '超出阶段超时'}"
+            lines.append(f"- {stage['name']}：{stage['outcome']}{extra}{note}")
     lock_path = config.lock_path()
     running = False
     if lock_path.exists():
@@ -597,6 +834,8 @@ def config_from_args(args: argparse.Namespace) -> RunnerConfig:
         raw_dir=raw_dir,
         daily_dir=daily_dir,
         status_output=status_output,
+        vault_dir=vault,
+        target_rel=_pick(None, "PERSONAL_MEMORY_TARGET_REL", file_values, str, None),
         work_dir=args.work_dir,
         timezone=_pick(args.timezone, "PERSONAL_MEMORY_TIMEZONE", file_values, str,
                        DEFAULT_TIMEZONE),
@@ -639,8 +878,14 @@ def main() -> int:
     runner = Runner(config)
     try:
         return runner.run()
+    except ConfigError as exc:
+        print(f"[✗] 配置无效：{exc}", file=sys.stderr)
+        return EXIT_FAILED
     except Exception as exc:  # noqa: BLE001
-        print(f"LOCAL_INCREMENTAL_RUNNER_ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"LOCAL_INCREMENTAL_RUNNER_ERROR: {type(exc).__name__}: {runner.redact(str(exc))}",
+            file=sys.stderr,
+        )
         raise SystemExit(EXIT_FAILED)
 
 
