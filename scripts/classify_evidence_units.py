@@ -50,6 +50,39 @@ def is_pending_task(text: str) -> bool:
     return markdown_task(text)[0] == "pending"
 
 
+def _task_anchors(text: str) -> set[str]:
+    semantic = markdown_task(text)[1].casefold()
+    anchors = {item for item in re.findall(r"[a-z0-9][a-z0-9._-]{2,}", semantic) if len(item) >= 3}
+    for run in re.findall(r"[\u4e00-\u9fff]{3,}", semantic):
+        for size in (3, 4):
+            anchors.update(run[index:index + size] for index in range(len(run) - size + 1))
+    if re.fullmatch(r"[\u4e00-\u9fff]{2}", semantic):
+        anchors.add(semantic)
+    return anchors
+
+
+def suppress_redundant_completed_tasks(units: list[dict[str, Any]]) -> None:
+    """Hide checklist confirmations when a richer fact records the same work."""
+    for unit in units:
+        if unit.get("task_status") != "completed":
+            continue
+        anchors = _task_anchors(unit.get("text", ""))
+        candidates = [
+            other for other in units
+            if other is not unit and not other.get("task_status")
+            and other.get("date") == unit.get("date")
+            and other.get("document_id") == unit.get("document_id")
+        ]
+        match = next((
+            other for other in candidates
+            if any(anchor in f"{other.get('text', '')} {other.get('summary', '')}".casefold() for anchor in anchors)
+        ), None)
+        if match:
+            unit["visibility"] = "archive"
+            unit["classification_status"] = "suppressed_task"
+            unit["suppressed_by_unit_id"] = match["unit_id"]
+
+
 def is_structural_heading(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
@@ -294,6 +327,7 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
                 **unit, **label,
                 **({"task_status": task_status} if task_status else {}),
             })
+    suppress_redundant_completed_tasks(classified_units)
     return {
         "schema_version": "classified-evidence-v1",
         "classifier_version": CLASSIFIER_VERSION,
@@ -308,6 +342,7 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
             "units_fallback": sum(item["classification_status"] == "unclassified" for item in classified_units),
             "units_structural": sum(item["classification_status"] == "structural" for item in classified_units),
             "units_pending_tasks": sum(item["classification_status"] == "pending_task" for item in classified_units),
+            "units_suppressed_tasks": sum(item["classification_status"] == "suppressed_task" for item in classified_units),
             "units_preserved": len(classified_units),
         },
     }

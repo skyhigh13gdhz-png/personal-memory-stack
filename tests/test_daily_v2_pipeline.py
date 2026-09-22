@@ -105,6 +105,35 @@ class DailyV2PipelineTests(unittest.TestCase):
         )
         self.assertEqual(result["sections"][0]["groups"][0]["items"][0]["text"], "跟老婆一起吃晚餐")
 
+    def test_completed_checkbox_chrome_is_hidden_from_prompt_and_view(self):
+        classified = classified_fixture()
+        classified["units"][0].update({"text": "- [x] 跟老婆打网球", "task_status": "completed"})
+        units, _ = PIPELINE.alias_units(classified, "2026-01-01")
+        self.assertEqual(units[0]["text"], "跟老婆打网球")
+        editorial = {"sections": [{"groups": [{"items": [{
+            "label": "网球", "text": "- [x] 跟老婆打网球"
+        }]}]}]}
+        result = PIPELINE.apply_style_replacements(editorial, {})
+        self.assertEqual(result["sections"][0]["groups"][0]["items"][0]["text"], "跟老婆打网球")
+
+    def test_contiguous_source_block_items_are_reassembled(self):
+        classified = classified_fixture()
+        classified["units"] = [
+            {**classified["units"][0], "unit_id": "a", "source_block_id": "block-1"},
+            {**classified["units"][0], "unit_id": "b", "source_block_id": "block-1"},
+        ]
+        editorial = {"sections": [{"section_id": "other", "groups": [{
+            "group_id": "uncategorized", "group_kind": "facts", "items": [
+                {"label": "支持平台", "text": "控制台链接", "period": "unknown", "evidence_unit_ids": ["a"]},
+                {"label": "工单", "text": "工单号 123", "period": "unknown", "evidence_unit_ids": ["b"]},
+            ],
+        }]}]}
+        result = PIPELINE.merge_source_block_items(editorial, classified)
+        items = result["sections"][0]["groups"][0]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["text"], "控制台链接；工单号 123")
+        self.assertEqual(items[0]["evidence_unit_ids"], ["a", "b"])
+
     def test_drops_fact_item_reusing_reflection_evidence_outside_primary_section(self):
         classified = classified_fixture()
         classified["units"][0]["category"] = "reflection_growth"

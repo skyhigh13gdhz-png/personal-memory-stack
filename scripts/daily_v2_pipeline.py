@@ -37,6 +37,14 @@ CATEGORY_LABEL = {
     "relationships_home": "家庭记录", "pet": "宠物记录", "leisure": "休闲记录", "other": "其他记录",
     "reflection_growth": "觉察记录",
 }
+COMPLETED_TASK_CHROME = re.compile(r"^\s*[-*+]\s+\[[xX]\]\s*")
+
+
+def human_evidence_text(unit: dict[str, Any]) -> str:
+    text = str(unit.get("text", ""))
+    if unit.get("task_status") == "completed":
+        return COMPLETED_TASK_CHROME.sub("", text).strip()
+    return text
 
 
 def load_classified(path: Path) -> dict[str, Any]:
@@ -55,10 +63,11 @@ def alias_units(classified: dict[str, Any], day: str) -> tuple[list[dict[str, An
     reverse = {unit_id: alias for alias, unit_id in aliases.items()}
     payload = [{
         "id": reverse[unit["unit_id"]],
-        "text": unit["text"],
+        "text": human_evidence_text(unit),
         "current_category": unit["category"],
         "current_summary": unit["summary"],
         "subject_ids": unit["subject_ids"],
+        "source_block_id": unit.get("source_block_id"),
     } for unit in visible]
     return payload, aliases
 
@@ -88,6 +97,8 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
                 "同一事件明确从一个时段延续到另一时段时用 span；不得因为人物或主题相同就把早晨、午间、下午、"
                 "晚上的独立事件合并，不同事件必须拆成不同 item。"
                 "晨间/早上既喝水又吃东西属于 breakfast，不得归入 snacks_hydration。"
+                "source_block_id 相同表示内容来自同一编号记录块；其中的说明、链接、工单号等资料必须聚合为同一"
+                "事件/资料条目，不得把一个资料块强行平铺成多个主题。"
                 "一个单元跨两个事实条目使用时，这些条目都必须 facet_split=true。保留用户稳定用词和领域术语，"
                 "不要改成公文腔。不得增加原文没有的结果、动机或因果。程序可直接计算的内容标"
                 "analysis_status=calculated；跨单元归纳标 observation；推断标 inference 且 uncertainty=true。"
@@ -408,8 +419,39 @@ def apply_style_replacements(editorial: dict[str, Any], style: dict[str, Any]) -
                     for source, target in replacements.items():
                         if isinstance(source, str) and isinstance(target, str):
                             value = value.replace(source, target)
+                    value = COMPLETED_TASK_CHROME.sub("", value).strip()
                     item[field] = value
     return replaced
+
+
+def merge_source_block_items(
+    editorial: dict[str, Any], classified: dict[str, Any]
+) -> dict[str, Any]:
+    """Reassemble adjacent Markdown record blocks after evidence classification."""
+    result = json.loads(json.dumps(editorial, ensure_ascii=False))
+    block_by_unit = {unit["unit_id"]: unit.get("source_block_id") for unit in classified.get("units", [])}
+    for section in result.get("sections", []):
+        for group in section.get("groups", []):
+            merged: list[dict[str, Any]] = []
+            positions: dict[str, int] = {}
+            for item in group.get("items", []):
+                blocks = {block_by_unit.get(unit_id) for unit_id in item.get("evidence_unit_ids", [])}
+                blocks.discard(None)
+                block_id = next(iter(blocks)) if len(blocks) == 1 else None
+                if not block_id or block_id not in positions:
+                    if block_id:
+                        positions[block_id] = len(merged)
+                    merged.append(item)
+                    continue
+                target = merged[positions[block_id]]
+                if item.get("text") not in target.get("text", ""):
+                    target["text"] = target["text"].rstrip("。；; ") + "；" + item["text"]
+                target["evidence_unit_ids"] = list(dict.fromkeys(
+                    target.get("evidence_unit_ids", []) + item.get("evidence_unit_ids", [])
+                ))
+                target["facet_split"] = True
+            group["items"] = merged
+    return result
 
 
 def source_hash(classified: dict[str, Any], day: str, style: dict[str, Any], model: str) -> str:
@@ -476,11 +518,11 @@ def main() -> int:
             editorial = normalize_editorial_structure(response["response"])
         else:
             editorial = normalize_editorial_structure(expand_aliases(response, aliases))
-        editorial = apply_style_replacements(complete_small_omissions(
+        editorial = apply_style_replacements(merge_source_block_items(complete_small_omissions(
             enforce_primary_section_membership(
                 split_cross_period_items(ground_unknown_periods(editorial, classified), classified), classified
             ), classified
-        ), style)
+        ), classified), style)
         result = package(editorial, classified, style, run={
             "mode": "deterministic-recovery" if args.command == "recover" else "offline-response",
             "calls": 0, "prompt_version": PROMPT_VERSION
@@ -511,13 +553,13 @@ def main() -> int:
         response, metrics = CLAIMS.request_llm(
             base_url, api_key, model, messages(classified, args.date, style), **request_options
         )
-        editorial = apply_style_replacements(complete_small_omissions(
+        editorial = apply_style_replacements(merge_source_block_items(complete_small_omissions(
             enforce_primary_section_membership(
                 split_cross_period_items(
                     ground_unknown_periods(normalize_editorial_structure(expand_aliases(response, aliases)), classified), classified
                 ), classified
             ), classified
-        ), style)
+        ), classified), style)
         run = {
             "mode": "live", "calls": 1, "prompt_version": PROMPT_VERSION,
             "model": model, "input_hash": digest, **metrics,
@@ -530,13 +572,13 @@ def main() -> int:
                 repair_messages(classified, args.date, style, response, first_error, aliases),
                 **request_options,
             )
-            repaired = apply_style_replacements(complete_small_omissions(
+            repaired = apply_style_replacements(merge_source_block_items(complete_small_omissions(
                 enforce_primary_section_membership(
                     split_cross_period_items(
                         ground_unknown_periods(normalize_editorial_structure(expand_aliases(repair_response, aliases)), classified), classified
                     ), classified
                 ), classified
-            ), style)
+            ), classified), style)
             repaired_run = {
                 **run,
                 "calls": 2,

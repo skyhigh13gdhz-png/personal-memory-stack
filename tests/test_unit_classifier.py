@@ -72,6 +72,7 @@ class UnitClassifierTests(unittest.TestCase):
             "units_fallback": 1,
             "units_structural": 0,
             "units_pending_tasks": 0,
+            "units_suppressed_tasks": 0,
             "units_preserved": 2,
         })
         self.assertEqual(result["units"][1]["summary"], "晚上吃面条。")
@@ -138,6 +139,21 @@ class UnitClassifierTests(unittest.TestCase):
         messages = CLASSIFIER.classification_messages(evidence)
         self.assertIn('"text":"跟老婆打网球"', messages[1]["content"])
         self.assertIn('"task_status":"completed"', messages[1]["content"])
+
+    def test_completed_task_is_suppressed_when_richer_fact_exists(self):
+        evidence = evidence_fixture()
+        evidence["units"][0]["text"] = "- [x] 网球"
+        evidence["units"][1]["text"] = "今天17点跟老婆打网球。"
+        labels = []
+        for unit, summary in zip(evidence["units"], ("网球", "17点跟老婆打网球")):
+            labels.append({
+                "unit_id": unit["unit_id"], "category": "exercise", "summary": summary,
+                "visibility": "daily", "importance": "normal", "subject_ids": [],
+            })
+        result = CLASSIFIER.classify_response(evidence, {"labels": labels})
+        self.assertEqual(result["units"][0]["classification_status"], "suppressed_task")
+        self.assertEqual(result["units"][0]["visibility"], "archive")
+        self.assertEqual(result["coverage"]["units_suppressed_tasks"], 1)
 
     def test_repair_logs_are_preserved_and_deduplicated(self):
         repair = {"field": "unit_id", "from": "bad", "to": "good"}

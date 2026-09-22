@@ -20,7 +20,7 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(PIPELINE)
 
 UNIT_VERSION = "evidence-units-v1"
-BUILDER_VERSION = "sentence-split-v2"
+BUILDER_VERSION = "sentence-split-v3"
 # Chinese sentence punctuation normally has no following whitespace. Requiring a
 # whitespace look-ahead merges unrelated facts from the same paragraph.
 SENTENCE_PATTERN = re.compile(r"[^\n]+?(?:[。！？!?]|(?=\n|$))")
@@ -33,7 +33,14 @@ def content_fingerprint(text: str) -> str:
 def split_document(document: dict[str, str]) -> list[dict[str, Any]]:
     text = document["original_text"]
     units = []
-    for match in SENTENCE_PATTERN.finditer(text):
+    block_markers = list(re.finditer(r"(?m)^\s*\d+[.、]\s*", text))
+    matches = []
+    for line in re.finditer(r"[^\n]+", text):
+        if re.fullmatch(r"\s*https?://\S+\s*", line.group(0)):
+            matches.append(line)
+        else:
+            matches.extend(SENTENCE_PATTERN.finditer(text, line.start(), line.end()))
+    for match in matches:
         raw = match.group(0)
         stripped = raw.strip()
         if not stripped:
@@ -42,7 +49,14 @@ def split_document(document: dict[str, str]) -> list[dict[str, Any]]:
         start = match.start() + leading
         end = start + len(stripped)
         identity = f"{document['document_id']}:{start}:{end}:{stripped}"
-        units.append({
+        previous_markers = [marker for marker in block_markers if marker.start() <= start]
+        block_id = None
+        if previous_markers:
+            marker = previous_markers[-1]
+            block_id = "block-" + hashlib.sha256(
+                f"{document['document_id']}:{marker.start()}".encode()
+            ).hexdigest()[:12]
+        unit = {
             "unit_id": "unit-" + hashlib.sha256(identity.encode()).hexdigest()[:20],
             "document_id": document["document_id"],
             "date": document["date"],
@@ -51,7 +65,10 @@ def split_document(document: dict[str, str]) -> list[dict[str, Any]]:
             "text": stripped,
             "text_sha256": hashlib.sha256(stripped.encode()).hexdigest(),
             "classification_status": "unclassified",
-        })
+        }
+        if block_id:
+            unit["source_block_id"] = block_id
+        units.append(unit)
     reconstructed = "".join(item["text"] for item in units)
     if content_fingerprint(reconstructed) != content_fingerprint(text):
         raise ValueError(f"lossless coverage failed for document {document['document_id']}")

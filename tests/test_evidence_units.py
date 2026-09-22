@@ -52,6 +52,18 @@ class EvidenceUnitTests(unittest.TestCase):
         self.assertEqual(UNITS.content_fingerprint("".join(item["text"] for item in units)),
                          UNITS.content_fingerprint(document["original_text"]))
 
+    def test_url_query_is_not_split_and_numbered_block_is_preserved(self):
+        document = {
+            "document_id": "doc-1", "date": "2026-01-01",
+            "original_text": "1. 处理网络问题。\n工单：\nhttps://example.com/ticket.php?tid=123&c=abc\n2. 打网球。",
+        }
+        units = UNITS.split_document(document)
+        url = next(item for item in units if item["text"].startswith("https://"))
+        self.assertEqual(url["text"], "https://example.com/ticket.php?tid=123&c=abc")
+        first_block = {item.get("source_block_id") for item in units[:3]}
+        self.assertEqual(len(first_block), 1)
+        self.assertNotEqual(units[0]["source_block_id"], units[-1]["source_block_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
