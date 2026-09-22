@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -28,12 +29,13 @@ def load_module(name: str, path: Path):
 CLAIMS = load_module("claim_candidate_pipeline", SCRIPT_DIR / "claim_candidate_pipeline.py")
 EDITORIAL = load_module("render_daily_v2_editorial", SCRIPT_DIR / "render_daily_v2_editorial.py")
 SCORER = load_module("score_daily_v2", SCRIPT_DIR / "score_daily_v2.py")
-PROMPT_VERSION = "daily-editorial-v2.2"
+PROMPT_VERSION = "daily-editorial-v2.4"
 CATEGORY_SECTION = EDITORIAL.CATEGORY_SECTION
 CATEGORY_LABEL = {
     "sleep_body": "补充记录", "food": "饮食记录", "exercise": "运动记录",
     "work_project": "项目记录", "trading_finance": "交易记录",
     "relationships_home": "家庭记录", "pet": "宠物记录", "leisure": "休闲记录", "other": "其他记录",
+    "reflection_growth": "觉察记录",
 }
 
 
@@ -70,11 +72,22 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
                 "你是个人日报编辑，不是事实抽取器。输入单元已通过证据校验，必须让每个 id 至少出现在一个"
                 "evidence_unit_ids 中。按栏目→具体项目/子主题→语义标签形成总分结构；同项目内容合并去重。"
                 "一级栏目只能使用固定 section_id：sleep/food/exercise/project_work/trading_finance/"
-                "relationships_home/pet/leisure/other；显示标题由程序决定。所有项目必须归入 project_work，"
+                "relationships_home/pet/leisure/reflection_growth/other；显示标题由程序决定。所有项目必须归入 project_work，"
                 "并以具体项目名建立 facts group，不能把某个项目提升为一级栏目。"
                 "交易操作、盘面、盈亏和账户内容只归入 trading_finance，不得在 project_work 下再建‘交易’分组。"
                 "同一事实不得在不同栏目重复改写；真正混合了两个维度的单元才能 facet_split，"
                 "且两个条目必须各自仅表达所属栏目的不同事实。"
+                "情绪事件、自我觉察、行为模式和改进方向必须放 reflection_growth，不得塞入 other。"
+                "reflection_growth 中的事实不得在 trading_finance 或其他栏目重复。"
+                "每个 group 必须有 group_id，只能使用程序给定的受控分组："
+                + json.dumps(EDITORIAL.GROUP_DEFINITIONS, ensure_ascii=False, separators=(",", ":")) + "。"
+                "同一小主题的多条事实必须聚合在同一 group，不要平铺成多个 group。分组显示顺序由程序固定，"
+                "如睡眠始终是夜间睡眠→午间休息→身体状态。project_work 使用 group_id=project，title 写具体项目名。"
+                "主题归类与发生时间是两个维度。每个 item 必须有 period，且只能为 overnight/morning/noon/"
+                "afternoon/evening/span/unknown；同一 group 内程序按 period 排序。一个 item 只表达一个时间连续的事件，"
+                "同一事件明确从一个时段延续到另一时段时用 span；不得因为人物或主题相同就把早晨、午间、下午、"
+                "晚上的独立事件合并，不同事件必须拆成不同 item。"
+                "晨间/早上既喝水又吃东西属于 breakfast，不得归入 snacks_hydration。"
                 "一个单元跨两个事实条目使用时，这些条目都必须 facet_split=true。保留用户稳定用词和领域术语，"
                 "不要改成公文腔。不得增加原文没有的结果、动机或因果。程序可直接计算的内容标"
                 "analysis_status=calculated；跨单元归纳标 observation；推断标 inference 且 uncertainty=true。"
@@ -82,7 +95,7 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
                 "直接计算可以留在 facts group 并标 calculated；观察/推断必须放在 group_kind=analysis，"
                 "正文必须明确不确定性。没有内容的栏目或字段不要生成。项目归组不等于创建长期 Subject。"
                 "只返回 daily-view-v2 JSON：{schema_version,date,sections:[{section_id,groups:["
-                "{group_kind,title?,items:[{label,text,evidence_unit_ids,facet_split?,analysis_status?,uncertainty?}]}]}]}。"
+                "{group_id,group_kind,title?,items:[{label,text,period,evidence_unit_ids,facet_split?,analysis_status?,uncertainty?}]}]}]}。"
                 "evidence_unit_ids 只能使用输入短 ID，不输出解释。"
             ),
         },
@@ -153,6 +166,25 @@ def normalize_editorial_structure(editorial: dict[str, Any]) -> dict[str, Any]:
             section["groups"] = groups
             sections.append(section)
     normalized["sections"] = sections
+    for section in sections:
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        ordered: list[dict[str, Any]] = []
+        for group in section["groups"]:
+            key = (str(group.get("group_id", "")), str(group.get("title", "")) if section.get("section_id") == "project_work" else "")
+            if key in merged:
+                if merged[key].get("group_kind") != group.get("group_kind"):
+                    merged[key]["group_kind"] = "mixed"
+                merged[key]["items"].extend(group["items"])
+            else:
+                merged[key] = group
+                ordered.append(group)
+        section["groups"] = ordered
+    unit_map: dict[str, dict[str, Any]] = {}
+    for section in sections:
+        for group in section["groups"]:
+            for item in group["items"]:
+                if item.get("period") not in EDITORIAL.PERIOD_ORDER:
+                    item["period"] = EDITORIAL.infer_period(item, unit_map)
     repeated = {unit_id for unit_id, count in Counter(fact_references).items() if count > 1}
     if repeated:
         for section in sections:
@@ -165,8 +197,75 @@ def normalize_editorial_structure(editorial: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def enforce_primary_section_membership(
+    editorial: dict[str, Any], classified: dict[str, Any]
+) -> dict[str, Any]:
+    """Drop mixed/misplaced items instead of duplicating them across sections.
+
+    We remove the item rather than silently deleting references from it: its
+    wording may combine those facts. Coverage recovery can then add grounded
+    source summaries back to their primary sections.
+    """
+    expected = {
+        unit["unit_id"]: CATEGORY_SECTION.get(unit.get("category", "other"), "other")
+        for unit in classified.get("units", [])
+    }
+    cleaned = json.loads(json.dumps(editorial, ensure_ascii=False))
+    for section in cleaned.get("sections", []):
+        section_id = section.get("section_id")
+        kept_groups = []
+        for group in section.get("groups", []):
+            group["items"] = [
+                item for item in group.get("items", [])
+                if all(expected.get(unit_id, section_id) == section_id
+                       for unit_id in item.get("evidence_unit_ids", []))
+            ]
+            if group["items"]:
+                kept_groups.append(group)
+        section["groups"] = kept_groups
+    cleaned["sections"] = [section for section in cleaned.get("sections", []) if section.get("groups")]
+    return cleaned
+
+
+# Compatibility for callers/tests created before primary membership became general.
+enforce_exclusive_primary_sections = enforce_primary_section_membership
+
+
+def split_cross_period_items(
+    editorial: dict[str, Any], classified: dict[str, Any]
+) -> dict[str, Any]:
+    """Replace model-merged multi-period items with grounded atomic summaries."""
+    result = json.loads(json.dumps(editorial, ensure_ascii=False))
+    unit_map = {unit["unit_id"]: unit for unit in classified.get("units", [])}
+    for section in result.get("sections", []):
+        for group in section.get("groups", []):
+            replacement = []
+            for item in group.get("items", []):
+                if len(EDITORIAL.detect_periods(f"{item.get('label', '')} {item.get('text', '')}")) <= 1:
+                    replacement.append(item)
+                    continue
+                refs = item.get("evidence_unit_ids", [])
+                unit_periods = [(unit_map.get(unit_id), infer_unit_period(unit_map.get(unit_id, {}))) for unit_id in refs]
+                known = {period for _, period in unit_periods if period != "unknown"}
+                if len(refs) < 2 or len(known) < 2:
+                    item["period"] = "span"
+                    replacement.append(item)
+                    continue
+                for unit, period in unit_periods:
+                    if not unit:
+                        continue
+                    replacement.append({
+                        "label": item.get("label", "补充记录"),
+                        "text": unit.get("summary") or unit.get("text", ""),
+                        "period": period,
+                        "evidence_unit_ids": [unit["unit_id"]],
+                    })
+            group["items"] = replacement
+    return result
+
+
 def complete_small_omissions(
-    editorial: dict[str, Any], classified: dict[str, Any], *, max_missing: int = 3
+    editorial: dict[str, Any], classified: dict[str, Any], *, max_missing: int = 6
 ) -> dict[str, Any]:
     """Deterministically retain a few model-omitted facts in their classified section."""
     completed = json.loads(json.dumps(editorial, ensure_ascii=False))
@@ -184,12 +283,7 @@ def complete_small_omissions(
         if unit.get("date") == day and unit.get("visibility") in {"daily", "both"}
     ]
     missing = [unit for unit in visible if unit["unit_id"] not in referenced]
-    misplaced = [
-        unit for unit in visible if unit["unit_id"] in referenced
-        and CATEGORY_SECTION.get(unit.get("category", "other"), "other")
-        not in reference_sections.get(unit["unit_id"], set())
-    ]
-    additions = missing + misplaced
+    additions = missing
     if not additions or len(additions) > max_missing:
         return completed
     section_map = {section["section_id"]: section for section in completed.get("sections", [])}
@@ -207,29 +301,96 @@ def complete_small_omissions(
             title = next((subject_names[item] for item in unit.get("subject_ids", []) if item in subject_names), "其他项目")
             group = next((item for item in facts if item.get("title") == title), None)
             if group is None:
-                group = {"group_kind": "facts", "title": title, "items": []}
+                group = {"group_id": "project", "group_kind": "facts", "title": title, "items": []}
                 section["groups"].append(group)
         else:
-            group = facts[0] if facts else None
+            group_id = fallback_group_id(section_id, unit)
+            group = next((item for item in facts if item.get("group_id") == group_id), None)
             if group is None:
-                group = {"group_kind": "facts", "items": []}
+                occupied = {item.get("group_id") for item in section["groups"]}
+                if group_id in occupied and facts:
+                    group = facts[0]
+                elif group_id in occupied:
+                    group_id = next(
+                        (candidate for candidate, _ in EDITORIAL.GROUP_DEFINITIONS[section_id]
+                         if candidate not in occupied),
+                        group_id,
+                    )
+            if group is None:
+                title = dict(EDITORIAL.GROUP_DEFINITIONS[section_id])[group_id]
+                group = {"group_id": group_id, "group_kind": "facts", "title": title, "items": []}
                 section["groups"].insert(0, group)
         new_item = {
             "label": CATEGORY_LABEL.get(category, "补充记录"),
             "text": unit.get("summary") or unit["text"],
+            "period": infer_unit_period(unit),
             "evidence_unit_ids": [unit["unit_id"]],
         }
-        if unit in misplaced:
-            new_item["facet_split"] = True
-            for existing_section in completed.get("sections", []):
-                for existing_group in existing_section.get("groups", []):
-                    if existing_group.get("group_kind") != "facts":
-                        continue
-                    for existing_item in existing_group.get("items", []):
-                        if unit["unit_id"] in existing_item.get("evidence_unit_ids", []):
-                            existing_item["facet_split"] = True
         group["items"].append(new_item)
     return completed
+
+
+def infer_unit_period(unit: dict[str, Any]) -> str:
+    periods = EDITORIAL.detect_periods(f"{unit.get('summary', '')} {unit.get('text', '')}")
+    return next((period for period in EDITORIAL.PERIOD_ORDER if period in periods), "unknown")
+
+
+def contextual_unit_periods(classified: dict[str, Any]) -> dict[str, str]:
+    """Resolve anaphoric timeline phrases from adjacent source units."""
+    by_document: dict[str, list[dict[str, Any]]] = {}
+    for unit in classified.get("units", []):
+        by_document.setdefault(str(unit.get("document_id", "")), []).append(unit)
+    resolved: dict[str, str] = {}
+    for units in by_document.values():
+        current = "unknown"
+        for unit in sorted(units, key=lambda item: int(item.get("start", 0))):
+            explicit = infer_unit_period(unit)
+            text = str(unit.get("text", "")).strip()
+            if explicit != "unknown":
+                current = explicit
+            elif current != "unknown" and re.match(r"^(期间|之后|随后|然后|当时|后来)", text):
+                explicit = current
+            resolved[unit["unit_id"]] = explicit
+    return resolved
+
+
+def ground_unknown_periods(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str, Any]:
+    grounded = json.loads(json.dumps(editorial, ensure_ascii=False))
+    periods = contextual_unit_periods(classified)
+    for section in grounded.get("sections", []):
+        for group in section.get("groups", []):
+            for item in group.get("items", []):
+                if item.get("period") != "unknown":
+                    continue
+                candidates = [periods.get(unit_id, "unknown") for unit_id in item.get("evidence_unit_ids", [])]
+                known = [period for period in candidates if period != "unknown"]
+                if known and len(set(known)) == 1:
+                    item["period"] = known[0]
+    return grounded
+
+
+def fallback_group_id(section_id: str, unit: dict[str, Any]) -> str:
+    """Choose a deterministic human group when the model omitted a unit."""
+    text = f"{unit.get('summary', '')} {unit.get('text', '')}"
+    if section_id == "food":
+        if re.search(r"早餐|早上|早晨|晨间|起床后", text) and re.search(r"吃|食用|面包|饭|粥|蛋", text):
+            return "breakfast"
+        if re.search(r"午餐|午饭|中午", text):
+            return "lunch"
+        if re.search(r"晚餐|晚饭|晚上", text):
+            return "dinner"
+        if re.search(r"买|消费|花费|价格|¥|￥", text):
+            return "consumption"
+        return "snacks_hydration"
+    if section_id == "sleep":
+        if re.search(r"午休|午睡", text):
+            return "nap"
+        if re.search(r"入睡|睡觉|夜里|夜间|凌晨|起床", text):
+            return "night_sleep"
+        return "body_state"
+    if section_id == "relationships_home":
+        return "partner" if re.search(r"老婆|妻子|伴侣", text) else "home"
+    return EDITORIAL.GROUP_DEFINITIONS[section_id][-1][0]
 
 
 def apply_style_replacements(editorial: dict[str, Any], style: dict[str, Any]) -> dict[str, Any]:
@@ -315,7 +476,11 @@ def main() -> int:
             editorial = normalize_editorial_structure(response["response"])
         else:
             editorial = normalize_editorial_structure(expand_aliases(response, aliases))
-        editorial = apply_style_replacements(complete_small_omissions(editorial, classified), style)
+        editorial = apply_style_replacements(complete_small_omissions(
+            enforce_primary_section_membership(
+                split_cross_period_items(ground_unknown_periods(editorial, classified), classified), classified
+            ), classified
+        ), style)
         result = package(editorial, classified, style, run={
             "mode": "deterministic-recovery" if args.command == "recover" else "offline-response",
             "calls": 0, "prompt_version": PROMPT_VERSION
@@ -347,7 +512,11 @@ def main() -> int:
             base_url, api_key, model, messages(classified, args.date, style), **request_options
         )
         editorial = apply_style_replacements(complete_small_omissions(
-            normalize_editorial_structure(expand_aliases(response, aliases)), classified
+            enforce_primary_section_membership(
+                split_cross_period_items(
+                    ground_unknown_periods(normalize_editorial_structure(expand_aliases(response, aliases)), classified), classified
+                ), classified
+            ), classified
         ), style)
         run = {
             "mode": "live", "calls": 1, "prompt_version": PROMPT_VERSION,
@@ -362,7 +531,11 @@ def main() -> int:
                 **request_options,
             )
             repaired = apply_style_replacements(complete_small_omissions(
-                normalize_editorial_structure(expand_aliases(repair_response, aliases)), classified
+                enforce_primary_section_membership(
+                    split_cross_period_items(
+                        ground_unknown_periods(normalize_editorial_structure(expand_aliases(repair_response, aliases)), classified), classified
+                    ), classified
+                ), classified
             ), style)
             repaired_run = {
                 **run,

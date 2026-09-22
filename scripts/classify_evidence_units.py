@@ -20,7 +20,7 @@ PIPELINE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(PIPELINE)
 
-CLASSIFIER_VERSION = "evidence-classifier-v1"
+CLASSIFIER_VERSION = "evidence-classifier-v1.2"
 CATEGORIES = {
     "sleep_body",
     "food",
@@ -30,10 +30,24 @@ CATEGORIES = {
     "relationships_home",
     "pet",
     "leisure",
+    "reflection_growth",
     "other",
 }
 VISIBILITIES = {"daily", "continuity", "both", "archive"}
 IMPORTANCES = {"low", "normal", "high"}
+TASK_PATTERN = re.compile(r"^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s*(?P<content>.*)$", re.DOTALL)
+
+
+def markdown_task(text: str) -> tuple[str | None, str]:
+    match = TASK_PATTERN.match(text)
+    if not match:
+        return None, text
+    status = "completed" if match.group("mark").lower() == "x" else "pending"
+    return status, match.group("content").strip()
+
+
+def is_pending_task(text: str) -> bool:
+    return markdown_task(text)[0] == "pending"
 
 
 def is_structural_heading(text: str) -> bool:
@@ -79,9 +93,14 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
         if is_structural_heading(item["text"]):
             previous_by_document[item["document_id"]] = item["text"]
             continue
+        task_status, semantic_text = markdown_task(item["text"])
+        if task_status == "pending":
+            previous_by_document[item["document_id"]] = item["text"]
+            continue
         units.append({
             "unit_id": item["unit_id"],
-            "text": item["text"],
+            "text": semantic_text,
+            "task_status": task_status,
             "context_before": previous_by_document.get(item["document_id"], ""),
         })
         previous_by_document[item["document_id"]] = item["text"]
@@ -93,7 +112,8 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
                 "不得遗漏、增加或合并 ID。summary 只能保守压缩当前 unit，不得加入外部信息或因果推断。"
                 "context_before 只用于消解当前 unit 的代词、主体或上下文，不得把前文事实重复写入 summary。"
                 "category 只能是 sleep_body/food/exercise/work_project/trading_finance/"
-                "relationships_home/pet/leisure/other。visibility 只能是 daily/continuity/both/archive。"
+                "relationships_home/pet/leisure/reflection_growth/other。情绪事件、自我觉察、模式反思和改进方向"
+                "归入 reflection_growth，不要放入 other。visibility 只能是 daily/continuity/both/archive。"
                 "importance 只能是 low/normal/high。subject_ids 只能使用允许列表；没有直接关联时返回空数组。"
                 "涉及健康、资产策略、人物或宠物档案的稳定状态只做候选关联，后续仍需人工确认。"
                 "返回 {labels:[{unit_id,category,summary,visibility,importance,subject_ids}]}，不输出解释。"
@@ -108,6 +128,26 @@ def classification_messages(evidence: dict[str, Any]) -> list[dict[str, str]]:
             ),
         },
     ]
+
+
+def classification_repair_messages(
+    evidence: dict[str, Any], response: dict[str, Any], error: Exception
+) -> list[dict[str, str]]:
+    base = classification_messages(evidence)
+    expected_ids = [
+        item["unit_id"] for item in evidence["units"]
+        if not is_structural_heading(item["text"]) and not is_pending_task(item["text"])
+    ]
+    base.extend([
+        {"role": "assistant", "content": json.dumps(response, ensure_ascii=False, separators=(",", ":"))},
+        {"role": "user", "content": (
+            "上一版分类响应未通过程序校验：" + str(error) + "。"
+            "请重新返回完整 labels，unit_id 必须逐字复制下列 ID，顺序不变、不得改写：" +
+            json.dumps(expected_ids, ensure_ascii=False, separators=(",", ":")) +
+            "。只返回符合原 schema 的 JSON。"
+        )},
+    ])
+    return base
 
 
 def _within_one_edit(left: str, right: str) -> bool:
@@ -225,6 +265,19 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
                 "classification_status": "structural",
             })
             continue
+        task_status, task_content = markdown_task(unit["text"])
+        if task_status == "pending":
+            classified_units.append({
+                **unit,
+                "category": "other",
+                "summary": task_content or unit["text"],
+                "visibility": "archive",
+                "importance": "low",
+                "subject_ids": [],
+                "task_status": "pending",
+                "classification_status": "pending_task",
+            })
+            continue
         label = accepted.get(unit["unit_id"])
         if label is None:
             classified_units.append({
@@ -237,7 +290,10 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
                 "classification_status": "unclassified",
             })
         else:
-            classified_units.append({**unit, **label})
+            classified_units.append({
+                **unit, **label,
+                **({"task_status": task_status} if task_status else {}),
+            })
     return {
         "schema_version": "classified-evidence-v1",
         "classifier_version": CLASSIFIER_VERSION,
@@ -251,6 +307,7 @@ def classify_response(evidence: dict[str, Any], response: dict[str, Any]) -> dic
             "units_classified": sum(item["classification_status"] == "classified" for item in classified_units),
             "units_fallback": sum(item["classification_status"] == "unclassified" for item in classified_units),
             "units_structural": sum(item["classification_status"] == "structural" for item in classified_units),
+            "units_pending_tasks": sum(item["classification_status"] == "pending_task" for item in classified_units),
             "units_preserved": len(classified_units),
         },
     }
@@ -337,20 +394,26 @@ def main() -> int:
             "thinking": os.environ.get("UNIT_LLM_THINKING", "disabled"),
             "timeout": int(os.environ.get("UNIT_LLM_TIMEOUT", "300")),
         }
-        non_structural = [unit for unit in evidence["units"] if not is_structural_heading(unit["text"])]
+        non_structural = [
+            unit for unit in evidence["units"]
+            if not is_structural_heading(unit["text"]) and not is_pending_task(unit["text"])
+        ]
         batch_size = int(os.environ.get("UNIT_LLM_BATCH_SIZE", "12"))
         batches = [non_structural[index:index + batch_size] for index in range(0, len(non_structural), batch_size)]
         all_labels: list[dict[str, Any]] = []
         call_metrics: list[dict[str, Any]] = []
         calls = 0
+        max_batch_attempts = max(2, int(os.environ.get("UNIT_LLM_MAX_ATTEMPTS", "3")))
         for batch_index, batch in enumerate(batches, start=1):
             batch_evidence = {**evidence, "units": batch}
             expected_ids = {unit["unit_id"] for unit in batch}
             first_error = None
-            for attempt in range(2):
+            current_messages = classification_messages(batch_evidence)
+            batch_response: dict[str, Any] | None = None
+            for attempt in range(max_batch_attempts):
                 try:
                     batch_response, metrics = PIPELINE.request_llm(
-                        base_url, api_key, model, classification_messages(batch_evidence), **request_options
+                        base_url, api_key, model, current_messages, **request_options
                     )
                     calls += 1
                     labels = batch_response.get("labels") if isinstance(batch_response, dict) else None
@@ -375,8 +438,10 @@ def main() -> int:
                     break
                 except (RuntimeError, ValueError) as exc:
                     first_error = exc
-                    if attempt == 1:
+                    if attempt == max_batch_attempts - 1:
                         raise
+                    if isinstance(batch_response, dict):
+                        current_messages = classification_repair_messages(batch_evidence, batch_response, exc)
             if first_error is not None:
                 metrics["retry_reason"] = str(first_error)
             all_labels.extend(labels)

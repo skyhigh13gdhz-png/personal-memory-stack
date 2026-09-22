@@ -46,6 +46,15 @@ class DailyV2PipelineTests(unittest.TestCase):
         self.assertTrue(items[0]["facet_split"])
         self.assertTrue(items[1]["facet_split"])
 
+    def test_normalize_merges_duplicate_controlled_groups(self):
+        editorial = {"sections": [{"section_id": "food", "groups": [
+            {"group_id": "breakfast", "group_kind": "facts", "items": [{"label": "A", "text": "A", "evidence_unit_ids": ["u1"]}]},
+            {"group_id": "breakfast", "group_kind": "facts", "items": [{"label": "B", "text": "B", "evidence_unit_ids": ["u2"]}]},
+        ]}]}
+        result = PIPELINE.normalize_editorial_structure(editorial)
+        self.assertEqual(len(result["sections"][0]["groups"]), 1)
+        self.assertEqual(len(result["sections"][0]["groups"][0]["items"]), 2)
+
     def test_uses_short_ids_and_only_daily_units(self):
         units, aliases = PIPELINE.alias_units(classified_fixture(), "2026-01-01")
         self.assertEqual(aliases, {"u01": "unit-long-hash-a"})
@@ -74,6 +83,20 @@ class DailyV2PipelineTests(unittest.TestCase):
         item = result["sections"][0]["groups"][0]["items"][0]
         self.assertEqual(item["evidence_unit_ids"], ["unit-long-hash-a"])
         self.assertEqual(item["label"], "饮食记录")
+        self.assertEqual(result["sections"][0]["groups"][0]["group_id"], "breakfast")
+        self.assertEqual(item["period"], "morning")
+
+    def test_morning_water_and_food_falls_back_to_breakfast(self):
+        classified = classified_fixture()
+        classified["units"][0].update({
+            "text": "晨间喝了一杯热水，吃了点东西。",
+            "summary": "晨间喝热水并吃了点东西",
+        })
+        editorial = {"schema_version": "daily-view-v2", "date": "2026-01-01", "sections": []}
+        result = PIPELINE.complete_small_omissions(editorial, classified)
+        group = result["sections"][0]["groups"][0]
+        self.assertEqual(group["group_id"], "breakfast")
+        self.assertEqual(group["items"][0]["period"], "morning")
 
     def test_applies_configured_style_replacements(self):
         editorial = {"sections": [{"groups": [{"items": [{"label": "关系", "text": "跟妻子共进晚餐"}]}]}]}
@@ -81,6 +104,67 @@ class DailyV2PipelineTests(unittest.TestCase):
             editorial, {"replacements": {"妻子": "老婆", "共进": "一起吃"}}
         )
         self.assertEqual(result["sections"][0]["groups"][0]["items"][0]["text"], "跟老婆一起吃晚餐")
+
+    def test_drops_fact_item_reusing_reflection_evidence_outside_primary_section(self):
+        classified = classified_fixture()
+        classified["units"][0]["category"] = "reflection_growth"
+        editorial = {"sections": [
+            {"section_id": "trading_finance", "groups": [{
+                "group_id": "reflection", "group_kind": "facts", "items": [{
+                    "label": "交易情绪", "text": "起了情绪", "evidence_unit_ids": ["unit-long-hash-a"]
+                }],
+            }]},
+            {"section_id": "reflection_growth", "groups": [{
+                "group_id": "event", "group_kind": "facts", "items": [{
+                    "label": "情绪事件", "text": "起了情绪", "evidence_unit_ids": ["unit-long-hash-a"]
+                }],
+            }]},
+        ]}
+        result = PIPELINE.enforce_exclusive_primary_sections(editorial, classified)
+        self.assertEqual([item["section_id"] for item in result["sections"]], ["reflection_growth"])
+
+    def test_drops_any_item_with_evidence_in_wrong_primary_section(self):
+        editorial = {"sections": [{"section_id": "sleep", "groups": [{
+            "group_id": "body_state", "group_kind": "facts", "items": [{
+                "label": "身体状态", "text": "早餐吃面包", "period": "morning",
+                "evidence_unit_ids": ["unit-long-hash-a"],
+            }],
+        }]}]}
+        result = PIPELINE.enforce_primary_section_membership(editorial, classified_fixture())
+        self.assertEqual(result["sections"], [])
+
+    def test_splits_model_merged_events_from_distinct_periods(self):
+        classified = classified_fixture()
+        classified["units"].append({
+            "unit_id": "unit-night", "date": "2026-01-01", "visibility": "daily",
+            "text": "半夜开仓。", "summary": "半夜开仓", "category": "food", "subject_ids": [],
+            "document_id": "d1", "start": 13, "end": 18,
+        })
+        editorial = {"sections": [{"section_id": "food", "groups": [{
+            "group_id": "breakfast", "group_kind": "facts", "items": [{
+                "label": "记录", "text": "半夜开仓，早上吃面包。", "period": "morning",
+                "evidence_unit_ids": ["unit-night", "unit-long-hash-a"],
+            }],
+        }]}]}
+        result = PIPELINE.split_cross_period_items(editorial, classified)
+        items = result["sections"][0]["groups"][0]["items"]
+        self.assertEqual([item["period"] for item in items], ["overnight", "morning"])
+        self.assertEqual([item["evidence_unit_ids"] for item in items], [["unit-night"], ["unit-long-hash-a"]])
+
+    def test_anaphoric_event_inherits_previous_source_period(self):
+        classified = classified_fixture()
+        classified["units"] = [
+            {**classified["units"][0], "unit_id": "night", "text": "凌晨回床睡觉。", "summary": "凌晨回床睡觉", "start": 0},
+            {**classified["units"][0], "unit_id": "during", "text": "期间老婆热醒，拿了风扇。", "summary": "期间老婆热醒，拿了风扇", "start": 10},
+        ]
+        editorial = {"sections": [{"section_id": "relationships_home", "groups": [{
+            "group_id": "partner", "group_kind": "facts", "items": [{
+                "label": "家庭记录", "text": "期间老婆热醒，拿了风扇。", "period": "unknown",
+                "evidence_unit_ids": ["during"],
+            }],
+        }]}]}
+        result = PIPELINE.ground_unknown_periods(editorial, classified)
+        self.assertEqual(result["sections"][0]["groups"][0]["items"][0]["period"], "overnight")
 
     def test_expands_short_ids_before_validation(self):
         response = {

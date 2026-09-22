@@ -71,6 +71,7 @@ class UnitClassifierTests(unittest.TestCase):
             "units_classified": 1,
             "units_fallback": 1,
             "units_structural": 0,
+            "units_pending_tasks": 0,
             "units_preserved": 2,
         })
         self.assertEqual(result["units"][1]["summary"], "晚上吃面条。")
@@ -118,6 +119,26 @@ class UnitClassifierTests(unittest.TestCase):
         self.assertEqual(result["units"][0]["visibility"], "archive")
         self.assertEqual(result["coverage"]["units_structural"], 1)
 
+    def test_pending_markdown_task_is_preserved_but_excluded_from_daily(self):
+        evidence = evidence_fixture()
+        evidence["units"][0]["text"] = "- [ ] 金刚功或下楼走一圈"
+        messages = CLASSIFIER.classification_messages(evidence)
+        self.assertNotIn('"unit_id":"unit-1"', messages[1]["content"])
+        result = CLASSIFIER.classify_response(evidence, {"labels": []})
+        unit = result["units"][0]
+        self.assertEqual(unit["classification_status"], "pending_task")
+        self.assertEqual(unit["task_status"], "pending")
+        self.assertEqual(unit["visibility"], "archive")
+        self.assertEqual(unit["summary"], "金刚功或下楼走一圈")
+        self.assertEqual(result["coverage"]["units_pending_tasks"], 1)
+
+    def test_completed_markdown_task_is_classified_without_checkbox_chrome(self):
+        evidence = evidence_fixture()
+        evidence["units"][0]["text"] = "- [x] 跟老婆打网球"
+        messages = CLASSIFIER.classification_messages(evidence)
+        self.assertIn('"text":"跟老婆打网球"', messages[1]["content"])
+        self.assertIn('"task_status":"completed"', messages[1]["content"])
+
     def test_repair_logs_are_preserved_and_deduplicated(self):
         repair = {"field": "unit_id", "from": "bad", "to": "good"}
         other = {"field": "unit_id", "from": "old", "to": "new"}
@@ -133,6 +154,13 @@ class UnitClassifierTests(unittest.TestCase):
         self.assertIn("context_before 只用于消解", messages[0]["content"])
         self.assertIn('"unit_id":"unit-2"', messages[1]["content"])
         self.assertIn('"context_before":"整理记忆项目。"', messages[1]["content"])
+
+    def test_repair_prompt_pins_exact_unit_ids(self):
+        messages = CLASSIFIER.classification_repair_messages(
+            evidence_fixture(), {"labels": [{"unit_id": "changed"}]}, ValueError("coverage mismatch")
+        )
+        self.assertIn('"unit-1","unit-2"', messages[-1]["content"])
+        self.assertIn("逐字复制", messages[-1]["content"])
 
 
 if __name__ == "__main__":

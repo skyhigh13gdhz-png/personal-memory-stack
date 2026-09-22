@@ -108,6 +108,35 @@
 
 这些任务需要连续理解用户偏好、风险边界和既有设计，拆给另一个 Agent 的复核成本通常高于节省的额度。
 
+## WB-04 日报分类体系配置化（当前推荐领取）
+
+### 仓库和基线
+
+- 仓库：`personal-memory-stack`，基线以领取时 `main` 最新提交为准；开始前确认工作区干净。
+- 建议分支：`feature/configurable-daily-taxonomy`
+- 允许修改：新增 taxonomy 配置、配置加载/校验模块、测试、README 和规范文档。
+- 禁止修改：真实 Vault、生产服务、LLM 凭据、用户原始记录、Daily V2 文案质量判断、当前 Subject 数据。
+
+### 目标
+
+把 `render_daily_v2_editorial.py` 中面向具体用户的栏目、分组标题、显示顺序和回退规则迁移到可校验配置；程序只保留证据、时间、去重、事实/分析边界等通用不变量。
+
+1. 提供内置通用默认 taxonomy 与个人覆盖配置，未配置时行为必须与当前主线一致；
+2. 配置至少覆盖 section ID/标题/顺序、group ID/标题/顺序和确定性 fallback 关键词；
+3. 未知内容进入稳定的 `other/uncategorized`，不得由 LLM 临时创造目录；
+4. 新用户可以复制示例配置启动，不需要改 Python；
+5. 配置错误（重复 ID、未知 section、空标题、非法 fallback）启动即失败；
+6. renderer、pipeline、score 共用同一份加载结果，禁止各自复制常量；
+7. 保持现有 JSON 与 Markdown 兼容，禁止顺手改日报文风或真实分类结果。
+
+### 验收条件
+
+- 默认配置下现有全量测试无回归；
+- 新增至少两套 fixture：当前个人配置、完全不同的示例用户配置（例如育儿/科研），证明无需改代码即可改变分组；
+- 覆盖配置合并、未知内容 fallback、顺序稳定、重复 ID 和非法配置拒绝；
+- `python3 -m unittest discover -s tests -v` 全绿；
+- 交付 commit、逐文件说明、迁移风险和主线复核命令；不调用外部 API。
+
 ## WorkBuddy 完工回传格式
 
 ```text

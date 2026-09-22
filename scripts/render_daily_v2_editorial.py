@@ -23,6 +23,7 @@ SECTION_TITLES = {
     "relationships_home": "关系与家庭",
     "pet": "宠物",
     "leisure": "休闲",
+    "reflection_growth": "情绪与自我觉察",
     "other": "其他",
 }
 SECTION_ORDER = tuple(SECTION_TITLES)
@@ -35,8 +36,52 @@ CATEGORY_SECTION = {
     "relationships_home": "relationships_home",
     "pet": "pet",
     "leisure": "leisure",
+    "reflection_growth": "reflection_growth",
     "other": "other",
 }
+
+GROUP_DEFINITIONS = {
+    "sleep": [("night_sleep", "夜间睡眠"), ("nap", "午间休息"), ("body_state", "身体状态")],
+    "food": [("breakfast", "早餐"), ("lunch", "午餐"), ("dinner", "晚餐"),
+             ("snacks_hydration", "加餐与饮水"), ("consumption", "消费")],
+    "exercise": [("tennis", "网球"), ("strength", "力量训练"), ("cardio", "有氧运动"),
+                 ("mobility", "拉伸与恢复"), ("other_exercise", "其他运动")],
+    "project_work": [("project", "")],
+    "trading_finance": [("execution", "交易执行"), ("result_risk", "结果与风险"),
+                        ("reflection", "复盘与纪律")],
+    "relationships_home": [("partner", "伴侣与关系"), ("family", "家庭"), ("home", "家务与生活")],
+    "pet": [("care", "健康与照护"), ("moments", "日常与美好瞬间")],
+    "leisure": [("entertainment", "休闲娱乐"), ("sensory", "感官体验")],
+    "reflection_growth": [("event", "情绪事件"), ("pattern", "觉察与模式"),
+                          ("improvement", "改进方向")],
+    "other": [("uncategorized", "其他记录")],
+}
+
+PERIOD_ORDER = ("overnight", "span", "morning", "noon", "afternoon", "evening", "unknown")
+PERIOD_LABELS = {
+    "overnight": "夜间", "span": "跨时段", "morning": "早晨", "noon": "中午",
+    "afternoon": "下午", "evening": "晚上", "unknown": "时间未明确",
+}
+
+
+def detect_periods(text: str) -> set[str]:
+    """Extract coarse event periods; ordering metadata is separate from topic."""
+    rules = {
+        "overnight": r"凌晨|半夜|夜里|夜间|睡梦中|睡觉时",
+        "morning": r"早上|早晨|晨间|起床后|上午|早餐",
+        "noon": r"中午|午间|午饭|午餐",
+        "afternoon": r"下午|午休",
+        "evening": r"傍晚|晚上|晚间|晚饭|晚餐",
+    }
+    return {period for period, pattern in rules.items() if re.search(pattern, text)}
+
+
+def infer_period(item: dict[str, Any], unit_map: dict[str, dict[str, Any]]) -> str:
+    periods = detect_periods(" ".join([
+        str(item.get("label", "")), str(item.get("text", "")),
+        *[str(unit_map.get(unit_id, {}).get("text", "")) for unit_id in item.get("evidence_unit_ids", [])],
+    ]))
+    return next((period for period in PERIOD_ORDER if period in periods), "unknown")
 
 
 def _semantic_text(value: str) -> str:
@@ -83,13 +128,25 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
         if not isinstance(groups, list) or not groups:
             errors.append(f"sections[{section_index}].groups must be non-empty")
             continue
+        seen_group_ids: set[str] = set()
         for group_index, group in enumerate(groups):
             items = group.get("items") if isinstance(group, dict) else None
             group_kind = group.get("group_kind") if isinstance(group, dict) else None
-            if group_kind not in {"facts", "analysis"}:
+            group_id = group.get("group_id") if isinstance(group, dict) else None
+            allowed_group_ids = {item[0] for item in GROUP_DEFINITIONS[section_id]}
+            if group_id not in allowed_group_ids:
+                errors.append(f"sections[{section_index}].groups[{group_index}].group_id is invalid")
+            elif section_id != "project_work" and group_id in seen_group_ids:
+                errors.append(f"sections[{section_index}] duplicate group_id {group_id}; cluster related items together")
+            seen_group_ids.add(group_id)
+            if group_kind not in {"facts", "analysis", "mixed"}:
                 errors.append(f"sections[{section_index}].groups[{group_index}].group_kind is invalid")
             if section_id == "project_work" and group_kind == "facts" and not group.get("title"):
                 errors.append(f"sections[{section_index}].groups[{group_index}] project facts require title")
+            if section_id != "project_work" and group.get("title") not in {None, ""}:
+                expected_title = dict(GROUP_DEFINITIONS[section_id]).get(group_id)
+                if group.get("title") != expected_title:
+                    errors.append(f"sections[{section_index}].groups[{group_index}].title must be {expected_title}")
             if not isinstance(items, list) or not items:
                 errors.append(f"sections[{section_index}].groups[{group_index}].items must be non-empty")
                 continue
@@ -102,6 +159,13 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
                     errors.append(f"{path}.label is required")
                 if not isinstance(item.get("text"), str) or not item["text"].strip():
                     errors.append(f"{path}.text is required")
+                period = item.get("period")
+                if period not in PERIOD_ORDER:
+                    errors.append(f"{path}.period must be one of {PERIOD_ORDER}")
+                detected = detect_periods(f"{item.get('label', '')} {item.get('text', '')}")
+                if (len(detected) > 1 and period != "span"
+                        and not (section_id == "sleep" and group_id == "night_sleep")):
+                    errors.append(f"{path} mixes distinct event periods {sorted(detected)}; split into separate items")
                 refs = item.get("evidence_unit_ids")
                 if not isinstance(refs, list) or not refs:
                     errors.append(f"{path}.evidence_unit_ids must be non-empty")
@@ -132,6 +196,8 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
         expected = CATEGORY_SECTION.get(unit.get("category"), "other")
         if unit_id in reference_sections and expected not in reference_sections[unit_id]:
             errors.append(f"unit {unit_id} must appear in primary section {expected}")
+        if expected == "reflection_growth" and reference_sections.get(unit_id, set()) - {expected}:
+            errors.append(f"reflection unit {unit_id} must not be duplicated outside reflection_growth")
     for unit_id, count in Counter(referenced).items():
         fact_items = [item for item in reference_items[unit_id] if item.get("analysis_status") is None]
         if len(fact_items) > 1 and not all(item.get("facet_split") is True for item in fact_items):
@@ -159,11 +225,19 @@ def render(editorial: dict[str, Any], classified: dict[str, Any], *, audit_detai
     for section in sections:
         lines.extend([f"## {SECTION_TITLES[section['section_id']]}", ""])
         numbered_groups = section["section_id"] == "project_work"
-        for group_index, group in enumerate(section["groups"], start=1):
-            if group.get("title"):
+        order = {group_id: index for index, (group_id, _) in enumerate(GROUP_DEFINITIONS[section["section_id"]])}
+        groups = sorted(section["groups"], key=lambda item: order[item["group_id"]])
+        for group_index, group in enumerate(groups, start=1):
+            title = group.get("title") or dict(GROUP_DEFINITIONS[section["section_id"]]).get(group["group_id"])
+            if title:
                 prefix = f"{group_index}. " if numbered_groups else ""
-                lines.extend([f"### {prefix}{group['title']}", ""])
-            for item in group["items"]:
+                lines.extend([f"### {prefix}{title}", ""])
+            unit_map = {unit["unit_id"]: unit for unit in classified["units"]}
+            items = sorted(
+                group["items"],
+                key=lambda item: PERIOD_ORDER.index(item.get("period") or infer_period(item, unit_map)),
+            )
+            for item in items:
                 suffix = ""
                 if item.get("analysis_status") == "calculated":
                     suffix = " `计算`" if audit_details else ""

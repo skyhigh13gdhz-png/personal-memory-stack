@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 import shlex
@@ -171,6 +172,22 @@ class RunnerTestCase(_RunnerHarness, unittest.TestCase):
         self.assertIn("2026-05-03", command)
         self.assertIn("2026-05-09", command)
         self.assertIn("--work-dir", command)
+        self.assertIn("--replace-existing", command)
+
+    def test_source_correction_marks_existing_daily_stale(self):
+        raw = self.write_day(self.raw_dir, "2026-05-09", "原始内容")
+        digest = hashlib.sha256(raw.read_bytes()).hexdigest()
+        daily = self.write_day(
+            self.daily_dir, "2026-05-09",
+            f"日报\n\n<!-- daily-v2-source-sha256:{digest} -->",
+        )
+        plan = MODULE.plan_run(self.raw_dir, self.daily_dir, date(2026, 5, 10), 3)
+        self.assertEqual(plan["stale"], [])
+        raw.write_text("# 2026-05-09\n\n纠错后内容\n", encoding="utf-8")
+        plan = MODULE.plan_run(self.raw_dir, self.daily_dir, date(2026, 5, 10), 3)
+        self.assertEqual(plan["missing"], [])
+        self.assertEqual(plan["stale"], ["2026-05-09"])
+        self.assertEqual(plan["selected"], ["2026-05-09"])
 
     # -- scenarios -------------------------------------------------------
     def test_no_change_skips_llm_stage(self):

@@ -163,6 +163,19 @@ bash scripts/install_local_incremental_runner.sh uninstall         # 回滚：bo
 
 `preview` 是默认行为：不写 `~/Library/LaunchAgents`，也不启动任何任务。`install` 必须显式带 `--confirm`，可用 `--interval=N`（>=300 秒）和 `--env-file=PATH` 覆盖；默认解释器是 `/usr/bin/python3`，需要更高版本时用 `PERSONAL_MEMORY_PYTHON` 指定。卸载只移除 LaunchAgent，日志与状态目录保留以便追溯。
 
+历史日报需要套用新版分类、待办语义或版式时，使用全量重建入口。默认只预览日期范围；正式模式逐日调用已配置的 LLM，单日未通过门禁时保留旧日报并留下隔离件，不会用失败结果覆盖：
+
+```bash
+bash scripts/rebuild_all_daily_v2.sh preview
+bash scripts/rebuild_all_daily_v2.sh run --confirm
+
+# 也可只重建指定范围
+bash scripts/rebuild_all_daily_v2.sh run --confirm \
+  --date-from=2026-09-04 --date-to=2026-09-20
+```
+
+Markdown 任务采用明确语义：未勾选的 `- [ ]` 只保留在原始记录和待办域，不作为已发生事实进入日报；已勾选的 `- [x]` / `- [X]` 可以进入日报，但编排前会移除复选框符号。
+
 ## 历史 Markdown 导入
 
 `scripts/import_markdown_history.py` 将以 `YYYY-MM-DD.md` 命名的历史日记通过 Gateway 正式 Retain 链路导入；过长日记可按已有章节拆成 `YYYY-MM-DD--slug.md`，仍归入同一天。它保留原文，使用稳定 Document ID，写入日期精度和来源 metadata，并生成可续跑 manifest；可按日期跳过已经存在的记录，避免把曾经通过 ChatGPT 写入的同日内容重复导入。

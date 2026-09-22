@@ -22,8 +22,8 @@ def classified_fixture():
 def editorial_fixture():
     return {
         "schema_version": "daily-view-v2", "date": "2026-01-01",
-        "sections": [{"section_id": "food", "groups": [{"group_kind": "facts", "items": [{
-            "label": "早餐", "text": "早餐跟老婆吃了面包。", "evidence_unit_ids": ["u1"],
+        "sections": [{"section_id": "food", "groups": [{"group_id": "breakfast", "group_kind": "facts", "items": [{
+            "label": "早餐", "text": "早餐跟老婆吃了面包。", "period": "morning", "evidence_unit_ids": ["u1"],
         }]}]}],
     }
 

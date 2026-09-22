@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,17 @@ SPEC.loader.exec_module(MODULE)
 
 
 class SyncDailyV2Tests(unittest.TestCase):
+    def test_stamp_source_hash_tracks_exact_raw_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "raw.md"
+            rendered = root / "daily.md"
+            raw.write_text("修正后原文", encoding="utf-8")
+            rendered.write_text("# 日报\n", encoding="utf-8")
+            digest = MODULE.stamp_source_hash(rendered, raw)
+            self.assertEqual(digest, hashlib.sha256(raw.read_bytes()).hexdigest())
+            self.assertIn(f"daily-v2-source-sha256:{digest}", rendered.read_text(encoding="utf-8"))
+
     def test_parse_projected_day_preserves_multiple_documents(self):
         content = """# 2026年9月20日
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -48,6 +49,14 @@ def atomic_publish(source: Path, target: Path) -> None:
     temporary.write_bytes(source.read_bytes())
     temporary.replace(target)
     target.chmod(0o600)
+
+
+def stamp_source_hash(rendered: Path, raw: Path) -> str:
+    """Bind a derived Daily V2 note to the exact projected source bytes."""
+    digest = hashlib.sha256(raw.read_bytes()).hexdigest()
+    with rendered.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n<!-- daily-v2-source-sha256:{digest} -->\n")
+    return digest
 
 
 def main() -> int:
@@ -130,6 +139,7 @@ def main() -> int:
                     str(SCRIPT_DIR / "render_daily_v2_editorial.py"), str(editorial),
                     "--classified", str(classified), "--output", str(rendered),
                 )
+                stamp_source_hash(rendered, raw_path)
                 atomic_publish(rendered, target)
                 print(f"[✓] published Daily V2: {target}")
                 generated += 1

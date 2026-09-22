@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,7 @@ DEFAULT_DAILY_REL = "AI/AI外置记忆/01-日报"
 DEFAULT_STATUS_REL = "AI/AI外置记忆/90-系统/运行状态/外置记忆运行状态.md"
 RUNNER_LABEL = "personal-memory-incremental"
 DATE_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+DAILY_SOURCE_HASH = re.compile(r"<!-- daily-v2-source-sha256:([0-9a-f]{64}) -->")
 SECRET_KEY_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "API_KEY", "AUTH")
 # Names that match a marker but never carry a credential.
 SECRET_KEY_EXCLUSIONS = ("SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS")
@@ -267,6 +269,24 @@ def dated_days(directory: Path) -> set[str]:
     return days
 
 
+def stale_daily_days(raw_dir: Path, daily_dir: Path) -> set[str]:
+    """Return notes whose recorded source digest no longer matches raw data.
+
+    Legacy notes without a marker are treated as an accepted baseline. Newly
+    generated notes always carry the marker, so later Document patches trigger
+    regeneration without rewriting the entire historical archive at rollout.
+    """
+    stale: set[str] = set()
+    for daily_path in daily_dir.glob("????-??-??.md") if daily_dir.exists() else ():
+        raw_path = raw_dir / daily_path.name
+        if not raw_path.exists():
+            continue
+        match = DAILY_SOURCE_HASH.search(daily_path.read_text(encoding="utf-8"))
+        if match and hashlib.sha256(raw_path.read_bytes()).hexdigest() != match.group(1):
+            stale.add(daily_path.stem)
+    return stale
+
+
 def plan_run(
     raw_dir: Path, daily_dir: Path, today: date, max_days_per_run: int
 ) -> dict[str, Any]:
@@ -279,7 +299,9 @@ def plan_run(
     """
     raw = dated_days(raw_dir)
     daily = dated_days(daily_dir)
-    backlog = sorted(day for day in raw - daily if date.fromisoformat(day) < today)
+    missing = sorted(day for day in raw - daily if date.fromisoformat(day) < today)
+    stale = sorted(day for day in stale_daily_days(raw_dir, daily_dir) if date.fromisoformat(day) < today)
+    backlog = sorted(set(missing) | set(stale))
     newest_first = sorted(backlog, reverse=True)[:max(max_days_per_run, 1)]
     selected = sorted(newest_first)
     pending = sorted(set(backlog) - set(selected))
@@ -287,7 +309,8 @@ def plan_run(
         "today": today.isoformat(),
         "raw_days": len(raw),
         "daily_days": len(daily),
-        "missing": backlog,
+        "missing": missing,
+        "stale": stale,
         "selected": selected,
         "pending": pending,
         "max_days_per_run": max(max_days_per_run, 1),
@@ -304,6 +327,7 @@ def build_daily_command(
         "--output-dir", str(daily_dir),
         "--date-from", start,
         "--date-to", end,
+        "--replace-existing",
     ]
     if work_dir is not None:
         command += ["--work-dir", str(work_dir)]
@@ -607,7 +631,8 @@ class Runner:
         self.emit(
             f"[→] 计划 {plan['today']}｜原始记录 {plan['raw_days']} 天｜"
             f"日报 {plan['daily_days']} 天｜待补 {len(plan['missing'])} 天｜"
-            f"本轮生成 {len(plan['selected'])} 天｜仍待处理 {len(plan['pending'])} 天"
+            f"待刷新 {len(plan.get('stale', []))} 天｜本轮生成 {len(plan['selected'])} 天｜"
+            f"仍待处理 {len(plan['pending'])} 天"
         )
         if plan["selected"]:
             self.emit(f"[→] 本轮生成：{', '.join(plan['selected'])}")
