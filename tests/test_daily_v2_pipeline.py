@@ -107,6 +107,11 @@ class DailyV2PipelineTests(unittest.TestCase):
         second = PIPELINE.source_hash(classified_fixture(), "2026-01-01", {"tone": "书面"}, "model")
         self.assertNotEqual(first, second)
 
+    def test_prompt_keeps_trading_out_of_project_groups(self):
+        prompt = PIPELINE.messages(classified_fixture(), "2026-01-01", {})[0]["content"]
+        self.assertIn("交易操作、盘面、盈亏", prompt)
+        self.assertIn("不得在 project_work 下再建‘交易’分组", prompt)
+
     def test_rejected_response_is_quarantined_separately(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "daily.json"

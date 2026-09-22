@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -38,6 +39,11 @@ CATEGORY_SECTION = {
 }
 
 
+def _semantic_text(value: str) -> str:
+    """Normalize presentation-only differences before duplicate comparison."""
+    return re.sub(r"[\s。，！？；：、,.!?;:‘’“”'\"]+", "", value).casefold()
+
+
 def load_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -59,6 +65,7 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
     referenced: list[str] = []
     reference_items: dict[str, list[dict[str, Any]]] = {}
     reference_sections: dict[str, set[str]] = {}
+    fact_rows: list[tuple[str, str, set[str], str]] = []
     sections = editorial.get("sections")
     if not isinstance(sections, list) or not sections:
         errors.append("sections must be a non-empty array")
@@ -116,6 +123,8 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
                     referenced.append(unit_id)
                     reference_items.setdefault(unit_id, []).append(item)
                     reference_sections.setdefault(unit_id, set()).add(section_id)
+                if group_kind == "facts" and status is None:
+                    fact_rows.append((path, section_id, set(refs), _semantic_text(item.get("text", ""))))
     missing = sorted(set(source_units) - set(referenced))
     if missing:
         errors.append(f"daily units without editorial destination: {missing}")
@@ -127,6 +136,16 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
         fact_items = [item for item in reference_items[unit_id] if item.get("analysis_status") is None]
         if len(fact_items) > 1 and not all(item.get("facet_split") is True for item in fact_items):
             errors.append(f"repeated unit {unit_id} requires facet_split=true on every use")
+    for index, (path, section_id, refs, text) in enumerate(fact_rows):
+        if not text:
+            continue
+        for other_path, other_section, other_refs, other_text in fact_rows[index + 1:]:
+            if section_id == other_section or not refs.intersection(other_refs):
+                continue
+            if text == other_text:
+                errors.append(
+                    f"cross-section duplicate facts {path} and {other_path} reuse the same evidence and meaning"
+                )
     if errors:
         raise ValueError("; ".join(errors))
     return {"daily_units": len(source_units), "referenced_units": len(set(referenced)), "references": len(referenced)}

@@ -66,6 +66,12 @@ class DailyV2EditorialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires facet_split"):
             EDITORIAL.validate(editorial, classified_fixture())
 
+    def test_rejects_cross_section_duplicate_meaning_even_when_facet_split(self):
+        editorial = editorial_fixture()
+        editorial["sections"][2]["groups"][0]["items"][0]["text"] = "上午处理项目。"
+        with self.assertRaisesRegex(ValueError, "cross-section duplicate facts"):
+            EDITORIAL.validate(editorial, classified_fixture())
+
     def test_inference_requires_uncertainty(self):
         editorial = editorial_fixture()
         group = editorial["sections"][0]["groups"][0]

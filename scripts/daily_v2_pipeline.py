@@ -28,7 +28,7 @@ def load_module(name: str, path: Path):
 CLAIMS = load_module("claim_candidate_pipeline", SCRIPT_DIR / "claim_candidate_pipeline.py")
 EDITORIAL = load_module("render_daily_v2_editorial", SCRIPT_DIR / "render_daily_v2_editorial.py")
 SCORER = load_module("score_daily_v2", SCRIPT_DIR / "score_daily_v2.py")
-PROMPT_VERSION = "daily-editorial-v2.1"
+PROMPT_VERSION = "daily-editorial-v2.2"
 CATEGORY_SECTION = EDITORIAL.CATEGORY_SECTION
 CATEGORY_LABEL = {
     "sleep_body": "补充记录", "food": "饮食记录", "exercise": "运动记录",
@@ -72,6 +72,9 @@ def messages(classified: dict[str, Any], day: str, style: dict[str, Any]) -> lis
                 "一级栏目只能使用固定 section_id：sleep/food/exercise/project_work/trading_finance/"
                 "relationships_home/pet/leisure/other；显示标题由程序决定。所有项目必须归入 project_work，"
                 "并以具体项目名建立 facts group，不能把某个项目提升为一级栏目。"
+                "交易操作、盘面、盈亏和账户内容只归入 trading_finance，不得在 project_work 下再建‘交易’分组。"
+                "同一事实不得在不同栏目重复改写；真正混合了两个维度的单元才能 facet_split，"
+                "且两个条目必须各自仅表达所属栏目的不同事实。"
                 "一个单元跨两个事实条目使用时，这些条目都必须 facet_split=true。保留用户稳定用词和领域术语，"
                 "不要改成公文腔。不得增加原文没有的结果、动机或因果。程序可直接计算的内容标"
                 "analysis_status=calculated；跨单元归纳标 observation；推断标 inference 且 uncertainty=true。"
