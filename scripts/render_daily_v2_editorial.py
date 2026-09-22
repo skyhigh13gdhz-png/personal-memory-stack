@@ -159,6 +159,18 @@ def validate(editorial: dict[str, Any], classified: dict[str, Any]) -> dict[str,
                     errors.append(f"{path}.label is required")
                 if not isinstance(item.get("text"), str) or not item["text"].strip():
                     errors.append(f"{path}.text is required")
+                resources = item.get("resources", [])
+                if not isinstance(resources, list):
+                    errors.append(f"{path}.resources must be an array")
+                else:
+                    for resource_index, resource in enumerate(resources):
+                        resource_path = f"{path}.resources[{resource_index}]"
+                        if not isinstance(resource, dict) or not str(resource.get("label", "")).strip():
+                            errors.append(f"{resource_path}.label is required")
+                        if not isinstance(resource, dict) or not re.fullmatch(
+                            r"https?://\S+", str(resource.get("url", ""))
+                        ):
+                            errors.append(f"{resource_path}.url must be a complete HTTP(S) URL")
                 period = item.get("period")
                 if period not in PERIOD_ORDER:
                     errors.append(f"{path}.period must be one of {PERIOD_ORDER}")
@@ -246,6 +258,8 @@ def render(editorial: dict[str, Any], classified: dict[str, Any], *, audit_detai
                 elif item.get("analysis_status") == "inference":
                     suffix = " `推测`" if audit_details else ""
                 lines.append(f"- {item['label']}：{item['text']}{suffix}")
+                for resource in item.get("resources", []):
+                    lines.append(f"  - [{resource['label']}]({resource['url']})")
                 refs = item["evidence_unit_ids"]
                 if audit_details:
                     lines.append("  - 证据：" + "、".join(f"[^{unit_id}]" for unit_id in refs))

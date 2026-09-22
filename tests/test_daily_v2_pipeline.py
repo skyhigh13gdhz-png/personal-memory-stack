@@ -134,6 +134,34 @@ class DailyV2PipelineTests(unittest.TestCase):
         self.assertEqual(items[0]["text"], "控制台链接；工单号 123")
         self.assertEqual(items[0]["evidence_unit_ids"], ["a", "b"])
 
+    def test_named_urls_become_separate_resources_instead_of_joined_prose(self):
+        classified = classified_fixture()
+        base = classified["units"][0]
+        classified["units"] = [
+            {**base, "unit_id": "fact", "source_block_id": "block-1", "start": 0,
+             "text": "IP 问题已解决。"},
+            {**base, "unit_id": "label-a", "source_block_id": "block-1", "start": 10,
+             "text": "VPS仪表盘：", "visibility": "archive"},
+            {**base, "unit_id": "url-a", "source_block_id": "block-1", "start": 20,
+             "text": "https://example.com/dashboard"},
+            {**base, "unit_id": "label-b", "source_block_id": "block-1", "start": 30,
+             "text": "直连问题工单：", "visibility": "archive"},
+            {**base, "unit_id": "url-b", "source_block_id": "block-1", "start": 40,
+             "text": "https://example.com/ticket?tid=1&c=2"},
+        ]
+        editorial = {"sections": [{"section_id": "other", "groups": [{
+            "group_id": "uncategorized", "group_kind": "facts", "items": [{
+                "label": "网络问题", "text": "IP 问题已解决；https://example.com/dashboard；https://example.com/ticket?tid=1&c=2",
+                "period": "unknown", "evidence_unit_ids": ["fact", "url-a", "url-b"],
+            }],
+        }]}]}
+        item = PIPELINE.merge_source_block_items(editorial, classified)["sections"][0]["groups"][0]["items"][0]
+        self.assertEqual(item["text"], "IP 问题已解决")
+        self.assertEqual(item["resources"], [
+            {"label": "VPS仪表盘", "url": "https://example.com/dashboard"},
+            {"label": "直连问题工单", "url": "https://example.com/ticket?tid=1&c=2"},
+        ])
+
     def test_drops_fact_item_reusing_reflection_evidence_outside_primary_section(self):
         classified = classified_fixture()
         classified["units"][0]["category"] = "reflection_growth"

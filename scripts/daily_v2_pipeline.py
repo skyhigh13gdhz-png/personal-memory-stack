@@ -427,9 +427,29 @@ def apply_style_replacements(editorial: dict[str, Any], style: dict[str, Any]) -
 def merge_source_block_items(
     editorial: dict[str, Any], classified: dict[str, Any]
 ) -> dict[str, Any]:
-    """Reassemble adjacent Markdown record blocks after evidence classification."""
+    """Reassemble record blocks without flattening named resources into prose."""
     result = json.loads(json.dumps(editorial, ensure_ascii=False))
-    block_by_unit = {unit["unit_id"]: unit.get("source_block_id") for unit in classified.get("units", [])}
+    source_units = classified.get("units", [])
+    block_by_unit = {unit["unit_id"]: unit.get("source_block_id") for unit in source_units}
+    resources_by_block: dict[str, list[dict[str, str]]] = {}
+    units_by_block: dict[str, list[dict[str, Any]]] = {}
+    for unit in source_units:
+        if unit.get("source_block_id"):
+            units_by_block.setdefault(unit["source_block_id"], []).append(unit)
+    for block_id, units in units_by_block.items():
+        pending_label = ""
+        resources: list[dict[str, str]] = []
+        for unit in sorted(units, key=lambda value: value.get("start", 0)):
+            text = str(unit.get("text", "")).strip()
+            if re.fullmatch(r"https?://\S+", text):
+                resources.append({"label": pending_label or "相关链接", "url": text})
+                pending_label = ""
+            elif text.endswith(("：", ":")) and len(text) <= 40:
+                pending_label = text.rstrip("：:").strip()
+            else:
+                pending_label = ""
+        if resources:
+            resources_by_block[block_id] = resources
     for section in result.get("sections", []):
         for group in section.get("groups", []):
             merged: list[dict[str, Any]] = []
@@ -451,6 +471,19 @@ def merge_source_block_items(
                 ))
                 target["facet_split"] = True
             group["items"] = merged
+            for item in group["items"]:
+                blocks = {block_by_unit.get(unit_id) for unit_id in item.get("evidence_unit_ids", [])}
+                blocks.discard(None)
+                if len(blocks) != 1:
+                    continue
+                resources = resources_by_block.get(next(iter(blocks)), [])
+                if not resources:
+                    continue
+                text = str(item.get("text", ""))
+                for resource in resources:
+                    text = text.replace(resource["url"], "")
+                item["text"] = re.sub(r"[;；]\s*(?=[;；]|$)", "", text).rstrip("。;； ")
+                item["resources"] = resources
     return result
 
 
