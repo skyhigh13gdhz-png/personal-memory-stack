@@ -646,6 +646,17 @@ class R7ChildStageVaultTests(_RunnerHarness, unittest.TestCase):
         env = self.child_env_for(config)
         self.assertEqual(env["PERSONAL_MEMORY_TARGET_REL"], "自定义/raw")
 
+    def test_standard_raw_dir_alone_infers_vault_for_parent_and_child(self):
+        vault = self.root / "raw-only-vault"
+        raw = vault / MODULE.DEFAULT_RAW_REL
+        config = self.config_from_cli(["run", "--raw-dir", str(raw)])
+        env = self.child_env_for(config)
+        self.assertEqual(config.vault_dir, vault)
+        self.assertEqual(config.daily_dir, vault / MODULE.DEFAULT_DAILY_REL)
+        self.assertEqual(config.status_output, vault / MODULE.DEFAULT_STATUS_REL)
+        self.assertEqual(env["PERSONAL_MEMORY_VAULT_DIR"], str(vault))
+        self.assertEqual(env["PERSONAL_MEMORY_TARGET_REL"], MODULE.DEFAULT_RAW_REL)
+
     def test_env_file_target_rel_wins(self):
         vault = self.root / "cli-vault"
         env_file = self.root / "runner.env"
@@ -877,6 +888,19 @@ class R10RedactionTests(_RunnerHarness, unittest.TestCase):
         self.assertNotIn(
             "super-secret-token", json.dumps(runner.records, ensure_ascii=False)
         )
+
+    def test_dry_run_custom_command_is_redacted(self):
+        secret = "dry-run-secret-token"
+        config = self.build_config(
+            dry_run=True,
+            extra_env={"SERVICE_API_TOKEN": secret},
+            sync_command=["/bin/echo", secret],
+        )
+        code, lines, runner = self.run_runner(config)
+        self.assertEqual(code, 0)
+        self.assertNotIn(secret, "\n".join(lines))
+        self.assertNotIn(secret, json.dumps(runner.records, ensure_ascii=False))
+        self.assertTrue(any("***" in line for line in lines))
 
 
 class ConfigValidationTests(unittest.TestCase):

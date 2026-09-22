@@ -127,11 +127,7 @@ class RunnerConfig:
             return self.vault_dir
         # Fall back to reversing the default projection layout, so callers
         # that build the config directly still hand the child a Vault.
-        suffix = Path(DEFAULT_RAW_REL).parts
-        parts = self.raw_dir.parts
-        if len(parts) > len(suffix) and tuple(parts[-len(suffix):]) == suffix:
-            return Path(*parts[: -len(suffix)])
-        return None
+        return infer_vault_dir(self.raw_dir)
 
     def resolved_target_rel(self, vault: Path) -> str:
         """Projection target relative to `vault`, as the sync stage expects."""
@@ -156,6 +152,15 @@ def validate_config(config: RunnerConfig) -> None:
         problems.append("stage_timeout 必须 > 0")
     if problems:
         raise ConfigError("；".join(problems))
+
+
+def infer_vault_dir(raw_dir: Path) -> Path | None:
+    """Recover a Vault root when raw_dir uses the standard managed suffix."""
+    suffix = Path(DEFAULT_RAW_REL).parts
+    parts = raw_dir.parts
+    if len(parts) > len(suffix) and tuple(parts[-len(suffix):]) == suffix:
+        return Path(*parts[: -len(suffix)])
+    return None
 
 
 def default_state_dir() -> Path:
@@ -539,8 +544,12 @@ class Runner:
 
     def run_stage(self, name: str, command: list[str]) -> StageResult:
         if self.config.dry_run:
-            self.emit(f"[dry-run] 将执行 {name}: {shlex.join(command)}")
-            self.log(name, "dry-run", command=command)
+            # Load the exact child environment so dry-run uses the same
+            # redaction set as a real run, while still executing nothing.
+            self.child_env()
+            safe_command = self.redact(shlex.join(command))
+            self.emit(f"[dry-run] 将执行 {name}: {safe_command}")
+            self.log(name, "dry-run", command=safe_command)
             return StageResult(name, "dry-run")
         env = self.child_env()
         attempts = self.config.max_attempts
@@ -813,14 +822,16 @@ def config_from_args(args: argparse.Namespace) -> RunnerConfig:
     file_values: dict[str, str] = {}
     if env_file is not None and env_file.exists():
         file_values = load_env_file(env_file)
-    vault = _pick(
+    explicit_vault = _pick(
         args.vault_dir, "PERSONAL_MEMORY_VAULT_DIR", file_values, Path,
-        Path(DEFAULT_VAULT_DIR),
+        None,
     )
+    default_vault = explicit_vault or Path(DEFAULT_VAULT_DIR)
     raw_dir = _pick(
         args.raw_dir, "PERSONAL_MEMORY_RAW_DIR", file_values, Path,
-        vault / DEFAULT_RAW_REL,
+        default_vault / DEFAULT_RAW_REL,
     )
+    vault = explicit_vault or infer_vault_dir(raw_dir) or default_vault
     daily_dir = _pick(
         args.daily_dir, "PERSONAL_MEMORY_DAILY_DIR", file_values, Path,
         vault / DEFAULT_DAILY_REL,
