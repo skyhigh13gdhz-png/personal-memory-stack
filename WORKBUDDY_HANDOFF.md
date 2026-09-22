@@ -2,6 +2,15 @@
 
 > 用途：把边界清楚、可独立验收的工程任务交给另一名 Coding Agent。产品语义、个人数据判断和最终上线仍由主线统一评审。
 
+## 当前领取顺序
+
+1. `WB-04` 日报分类体系配置化；
+2. `WB-05` 派生缓存有效性与可恢复重建；
+3. `WB-06` 运行状态、失败日期与隔离件可见性；
+4. `WB-02` 图片附件 A07 可行性验证。
+
+严格串行领取：前一项经主线复核合并后，下一项才从最新 `main` 开始。这样可以多利用 WorkBuddy，又避免几个分支同时修改日报核心文件造成高额合并和理解成本。
+
 ## 协作规则
 
 1. 每次只领取一个任务，使用独立 worktree 或独立分支，禁止直接改稳定工作目录。
@@ -136,6 +145,63 @@
 - 覆盖配置合并、未知内容 fallback、顺序稳定、重复 ID 和非法配置拒绝；
 - `python3 -m unittest discover -s tests -v` 全绿；
 - 交付 commit、逐文件说明、迁移风险和主线复核命令；不调用外部 API。
+
+## WB-05 派生缓存有效性与可恢复重建
+
+### 仓库和基线
+
+- 在 `WB-04` 合并后的最新 `main` 开始；建议分支 `feature/derived-cache-contract`。
+- 允许修改：`sync_daily_v2.py`、分类/编排缓存元数据、重建入口、测试和 README。
+- 禁止修改：Prompt 文案、taxonomy 内容、Vault 正式文件、外部 API 和真实个人数据。
+
+### 目标
+
+当前 `sync_daily_v2.py` 只根据中间文件是否存在决定是否复用。需要建立统一缓存契约，旧分类器、旧 Prompt、旧源文件或不同模型的缓存不得误复用。
+
+1. Evidence 缓存至少绑定原始 Document bundle hash 与 builder version；
+2. Classification 缓存至少绑定 Evidence source hash、classifier version 和 model；
+3. Editorial 缓存至少绑定 classified input、Prompt version、style 和 model；
+4. 缓存失效时只重算受影响阶段，不盲目删除整棵目录；
+5. 全量重建中断后允许复用同一次运行内仍有效的成功阶段；新一轮默认使用独立 run ID；
+6. 输出结构化 cache decision：`hit / miss / stale` 及非敏感原因，严禁输出 Token；
+7. 旧缓存没有契约元数据时按 `stale` 处理，不猜测有效。
+
+### 验收矩阵
+
+- 原始记录不变且版本不变：三阶段命中；
+- 只改 style：Evidence、Classification 命中，Editorial 失效；
+- 只改 classifier version：Evidence 命中，Classification 和 Editorial 失效；
+- 修改原始记录：全部相关阶段失效；
+- 模型变化：调用该模型的阶段失效；
+- 中断续跑、损坏 JSON、缺少字段、路径含中文空格；
+- 全测试使用 fixture/fake，不调用 LLM、不读取真实 Vault。
+
+## WB-06 运行状态、失败日期与隔离件可见性
+
+### 仓库和基线
+
+- 在 `WB-05` 合并后的最新 `main` 开始；建议分支 `feature/generation-health-dashboard`。
+- 允许修改：状态收集/渲染脚本、runner 状态、隔离件 manifest、测试和文档。
+- 禁止修改：日报正文风格、质量分数阈值、真实 Vault 内容、生产服务和凭据。
+
+### 目标
+
+用户无需看终端即可在 Obsidian 的 `90-系统/运行状态` 知道日报是否完整、哪些日期仍用旧版、哪些日期生成失败以及下一步是否需要人工介入。
+
+1. 分开展示：缺失、源已变化待刷新、生成失败且旧版保留、无可用日报、已恢复；
+2. 每个失败日期记录阶段、错误类型、首次/最近失败时间、尝试次数、隔离件路径（只显示 Vault/受管目录内安全相对路径）；
+3. 禁止把个人原文、LLM 响应、Token 或绝对 Home 路径写进状态页；
+4. 成功重建后自动关闭对应告警，但保留机器审计历史；
+5. 状态页必须明确“旧日报仍可读”与“该日完全空缺”的区别；
+6. runner 退出码与状态页一致，状态页渲染失败不能伪装整轮成功；
+7. 提供无数据、全绿、部分失败、连续失败后恢复、隔离件丢失等 fixture。
+
+### 验收条件
+
+- 新增状态 schema 版本与迁移/兼容说明；
+- Markdown 页面以人类可读为主，机器详情放隐藏注释或 JSON 状态文件；
+- `python3 -m unittest discover -s tests -v` 全绿；
+- 提供示例页面，但不得使用真实个人记录或真实绝对路径。
 
 ## WorkBuddy 完工回传格式
 
